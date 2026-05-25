@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+output/
+node_modules/
+.vscode/
+.env
+Dockerfile.bak
+*.bak

@@ -1,0 +1,5 @@
+{
+  "status": "error",
+  "last_build": null,
+  "error": "OpenSCAD not found in PATH"
+}

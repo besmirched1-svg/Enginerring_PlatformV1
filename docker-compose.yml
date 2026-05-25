@@ -1,0 +1,16 @@
+services:
+  engineering-platform:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - output_data:/app/output
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    environment:
+      - OUTPUT_DIR=/app/output
+
+volumes:
+  output_data:
