@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from app.core.revisions import archive_revision, update_promotion_status
 from app.core.promotion import get_current_champion, should_promote, set_new_champion
 from app.core.lineage import log_design_evolution
+from app.core.notifier import dispatch_cluster_alert
 
 logger = logging.getLogger("engine.orchestrator")
 
@@ -46,25 +47,18 @@ class EngineeringOrchestrator:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
         logger.info(f"Starting parametric CAD compiler for job {machine_name} [{revision_id}]")
         
-        parent_info = None
         champion = get_current_champion(machine_name)
         old_rev = champion.get("revision", "v0")
         old_score = champion.get("score", 0.0)
         
-        if chain_id:
-            parent_info = {
-                "chain_id": chain_id,
-                "attempt_in_chain": attempt_in_chain,
-                "parent_revision": old_rev
-            }
+        parent_info = {"chain_id": chain_id, "attempt_in_chain": attempt_in_chain, "parent_revision": old_rev} if chain_id else None
             
         self.event_bus.broadcast("build_started", {"machine_name": machine_name, "revision_id": revision_id})
         rev_dir = archive_revision(machine_name, revision_id, config, parent_info)
         scad_path = os.path.join(rev_dir, "model.scad")
         stl_path = os.path.join(rev_dir, "output.stl")
         
-        with open(scad_path, 'w', encoding='utf-8') as sf:
-            sf.write(self._generate_scad_template(config))
+        with open(scad_path, 'w', encoding='utf-8') as sf: sf.write(self._generate_scad_template(config))
             
         try:
             subprocess.run(["openscad", "-o", stl_path, scad_path], capture_output=True, timeout=10.0)
@@ -82,6 +76,14 @@ class EngineeringOrchestrator:
             if set_new_champion(machine_name, rev_dir, evaluation_result["score"]):
                 update_promotion_status(machine_name, revision_id, "champion")
                 log_design_evolution(machine_name, old_rev, revision_id, old_score, evaluation_result["score"], reason)
+                
+                # Wire automated external notification triggers into successful candidate promotions
+                dispatch_cluster_alert(
+                    title=f"🏆 CHAMPION PROMOTED: {machine_name}",
+                    text=f"Revision [{revision_id}] outscored baseline ({old_score:.2f} -> {evaluation_result['score']:.2f}). Reason: {reason}",
+                    alert_level="SUCCESS"
+                )
+                
                 self.event_bus.broadcast("revision_promoted", {"machine_name": machine_name, "revision_id": revision_id, "score": evaluation_result["score"], "reason": reason})
                 promotion_triggered = True
                 
