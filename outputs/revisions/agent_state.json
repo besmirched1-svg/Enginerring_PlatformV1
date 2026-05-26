@@ -2,33 +2,39 @@
   "status": "idle",
   "last_build": {
     "type": "machine",
-    "name": "compression_line_v1",
+    "name": "machine",
     "components": [
       "frame",
       "hopper",
       "roller"
     ],
-    "timestamp": "2026-05-26T03:13:02.022257Z",
+    "timestamp": "2026-05-26T04:40:22.470439Z",
     "config": {
-      "name": "compression_line_v1",
-      "frame": {
-        "length": 1400,
-        "width": 700,
-        "height": 900,
-        "profile": 40
+      "machine": {
+        "name": "htds_p2_live"
       },
       "roller": {
-        "diameter": 240,
-        "width": 700,
-        "shaft": 50,
-        "material": "stainless_316"
+        "length": 2400,
+        "shaft_diameter": 250,
+        "max_flight_diameter": 1200,
+        "min_flight_diameter": 300,
+        "flight_thickness": 12,
+        "intake_pitch": 200,
+        "compression_pitch": 150,
+        "discharge_pitch": 100
       },
       "hopper": {
-        "top_width": 500,
-        "bottom_width": 150,
-        "height": 350,
-        "wall": 4,
-        "material": "stainless_304"
+        "diameter": 1500,
+        "length": 4000,
+        "shell_thickness": 8,
+        "zone1_break": 40,
+        "zone2_separation": 20,
+        "zone3_cleaning": 10
+      },
+      "frame": {
+        "length": 7250,
+        "width": 2450,
+        "height": 600
       }
     }
   }

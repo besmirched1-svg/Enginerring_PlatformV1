@@ -18,3 +18,26 @@
 2026-05-26 13:13:02,022 INFO app.bom.generator: BOM spreadsheet successfully saved to: outputs\BOM\assembly_bom.csv
 2026-05-26 13:13:02,023 INFO app.importers.yaml_importer: Build result: {'status': 'success', 'assembly': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\assembly.scad', 'components': {'roller': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\roller.scad', 'hopper': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\hopper.scad', 'frame': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\frame.scad'}}
 2026-05-26 13:13:02,026 INFO app.workspace.ingestion: Moved to processing: example_machine.yaml
+2026-05-26 14:26:39,508 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2.md
+2026-05-26 14:26:39,513 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2.md
+2026-05-26 14:26:39,516 WARNING app.workspace.ingestion: Unsupported file type: .md
+2026-05-26 14:26:39,518 INFO app.workspace.ingestion: Moved to processing: htds_p2.md
+2026-05-26 14:27:41,419 INFO app.workspace.watcher: Stopping watcher
+2026-05-26 14:27:44,397 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 14:27:44,398 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 14:27:44,400 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 14:27:54,505 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2.md
+2026-05-26 14:27:54,505 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2.md
+2026-05-26 14:27:54,506 WARNING app.workspace.ingestion: Unsupported file type: .md
+2026-05-26 14:27:54,509 INFO app.workspace.ingestion: Moved to processing: htds_p2.md
+2026-05-26 14:30:24,210 INFO app.workspace.watcher: Stopping watcher
+2026-05-26 14:30:56,447 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 14:30:56,448 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 14:30:56,449 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 14:31:12,644 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2.md
+2026-05-26 14:31:12,645 ERROR app.workspace.watcher: Failed processing: workspace\uploads\htds_p2.md
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\workspace\watcher.py", line 30, in on_created
+    ingest_file(file_path)
+TypeError: ingest_file() missing 1 required positional argument: 'processing_dir'
+2026-05-26 14:32:47,518 INFO app.workspace.watcher: Stopping watcher

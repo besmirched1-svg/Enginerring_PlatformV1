@@ -1,78 +1,40 @@
-# app/workspace/ingestion.py
-
-from pathlib import Path
+﻿import os
 import shutil
 import logging
-import time
-
+from pathlib import Path
+from app.core.orchestrator import EngineeringAgent
 from app.importers.yaml_importer import import_yaml
 
 logger = logging.getLogger("app.workspace.ingestion")
-
-PROCESSING_DIR = Path("workspace/processing")
-FAILED_DIR = Path("workspace/failed")
-
-
-def wait_until_readable(file_path: Path, retries=10, delay=0.5):
-
-    for attempt in range(retries):
-
-        try:
-
-            with open(file_path, "r"):
-                return True
-
-        except PermissionError:
-
-            time.sleep(delay)
-
-    return False
-
+agent = EngineeringAgent()
 
 def ingest_file(file_path: Path):
-
+    """
+    Inspects incoming file configurations, routes them to correct parsers,
+    and runs the downstream engineering asset build loops.
+    """
     logger.info(f"Ingesting file: {file_path}")
-
-    PROCESSING_DIR.mkdir(parents=True, exist_ok=True)
-    FAILED_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not wait_until_readable(file_path):
-
-        logger.error(f"File remained locked: {file_path}")
-
-        shutil.move(
-            str(file_path),
-            FAILED_DIR / file_path.name
-        )
-
-        return
-
+    ext = file_path.suffix.lower()
+    
+    # Resolve the processing destination folder relative to the workspace directory
+    processing_dir = Path("workspace/processing")
+    processing_dir.mkdir(parents=True, exist_ok=True)
+    
     try:
-
-        suffix = file_path.suffix.lower()
-
-        if suffix in [".yaml", ".yml"]:
-
+        if ext in ['.yaml', '.yml']:
             import_yaml(file_path)
-
+        elif ext == '.md':
+            from app.importers.markdown_importer import import_markdown
+            import_markdown(file_path)
         else:
-
-            logger.warning(f"Unsupported file type: {suffix}")
-
-        shutil.move(
-            str(file_path),
-            PROCESSING_DIR / file_path.name
-        )
-
-        logger.info(f"Moved to processing: {file_path.name}")
-
-    except Exception:
-
-        logger.exception(f"Failed ingesting: {file_path}")
-
-        shutil.move(
-            str(file_path),
-            FAILED_DIR / file_path.name
-        )
-
-        logger.info(f"Moved to failed: {file_path.name}")
+            logger.warning(f"Unsupported file type: {ext}")
+            
+    except Exception as e:
+        logger.error(f"Ingestion pipeline failed for {file_path.name}: {str(e)}", exc_info=True)
+        
+    # Safely archive the document out of the active landing zone folder
+    processing_path = processing_dir / file_path.name
+    if processing_path.exists():
+        os.remove(processing_path)
+    shutil.move(str(file_path), str(processing_dir))
+    logger.info(f"Moved to processing: {file_path.name}")
