@@ -7,3 +7,5 @@ node_modules/
 .env
 Dockerfile.bak
 *.bak
+logs/*
+outputs/revisions/*

@@ -12,27 +12,6 @@ from app.workspace.ingestion import ingest_file
 logger = logging.getLogger("app.workspace.watcher")
 
 UPLOAD_DIR = Path("workspace/uploads")
-LOG_DIR = Path("logs")
-LOG_FILE = LOG_DIR / "watcher.log"
-
-
-def _configure_logging() -> None:
-    """Install console + appending file handlers on the root logger."""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    formatter = logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
-
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-
-    file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
-    file_handler.setFormatter(formatter)
-
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.handlers = [console, file_handler]
 
 
 class UploadHandler(FileSystemEventHandler):
@@ -57,9 +36,6 @@ class UploadHandler(FileSystemEventHandler):
 
 def start_workspace_watcher():
 
-    _configure_logging()
-
-    logger.info(f"Logging to console and {LOG_FILE.resolve()}")
     logger.info("Initializing polling watcher...")
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
