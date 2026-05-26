@@ -1,35 +1,21 @@
 {
-  "status": "idle",
+  "status": "error",
   "last_build": {
     "type": "machine",
-    "name": "HTDS_P2-CRITICAL-ERR-REV-C",
+    "name": "roller",
     "components": [
-      "compression_rollers",
-      "frame"
+      "roller"
     ],
-    "timestamp": "2026-05-26T05:01:45.948420Z",
+    "timestamp": "2026-05-26T05:57:51.589656Z",
     "config": {
-      "machine": {
-        "name": "HTDS_P2-CRITICAL-ERR-REV-C",
-        "revision": "P2-CRITICAL-ERR-REV-C"
-      },
       "roller": {
-        "length": 2400,
-        "shaft_diameter": 250
-      },
-      "hopper": {
-        "diameter": 1500,
-        "length": 4000
-      },
-      "frame": {
-        "length": 7250
-      },
-      "compression_rollers": {
-        "diameter": 450,
+        "diameter": 240,
         "width": 700,
-        "compression_gap": 125,
-        "alignment_tolerance": 0
-      }
+        "shaft": 50,
+        "material": "steel"
+      },
+      "name": "roller"
     }
-  }
+  },
+  "error": "OpenSCAD timed out after 120s"
 }

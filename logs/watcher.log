@@ -144,3 +144,16 @@ subprocess.CalledProcessError: Command '['openscad', '-o', 'C:\\Users\\chodk\\op
 2026-05-26 15:00:00,665 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\HTDS_P2-FAB-REV-B_bom.csv (total=8000.0 kg, AUD $106535.00)
 2026-05-26 15:00:00,667 INFO app.core.dashboard: Live HTML control dashboard generated successfully at: outputs\index.html
 2026-05-26 15:00:00,679 INFO app.workspace.ingestion: Moved to processing: htds_p2_constraints.md
+2026-05-26 15:01:36,787 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2_danger.md
+2026-05-26 15:01:36,787 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2_danger.md
+2026-05-26 15:01:36,788 INFO app.importers.markdown_importer: Loading industrial specification pack: workspace\uploads\htds_p2_danger.md
+2026-05-26 15:01:36,788 INFO app.importers.markdown_importer: Successfully processed spec pack HTDS_P2-CRITICAL-ERR-REV-C for orchestration loop
+2026-05-26 15:01:36,804 INFO app.cad.generator: Generated HTDS-P2 assembly 'HTDS-P2' with components: ['compression_rollers', 'frame']
+2026-05-26 15:01:41,876 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\assembly.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\assembly.png
+2026-05-26 15:01:41,886 INFO app.core.orchestrator: Compiling isolated asset layer: frame
+2026-05-26 15:01:44,615 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\frame.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\frame.png
+2026-05-26 15:01:44,616 INFO app.core.orchestrator: Compiling isolated asset layer: compression_rollers
+2026-05-26 15:01:45,937 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\compression_roller.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\compression_roller.png
+2026-05-26 15:01:45,942 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\HTDS_P2-CRITICAL-ERR-REV-C_bom.csv (total=8000.0 kg, AUD $106535.00)
+2026-05-26 15:01:45,946 INFO app.core.dashboard: Live HTML control dashboard generated successfully at: outputs\index.html
+2026-05-26 15:01:45,953 INFO app.workspace.ingestion: Moved to processing: htds_p2_danger.md

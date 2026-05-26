@@ -1,26 +1,32 @@
 # app/api/routes.py
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, Field
-from app.core.orchestrator import EngineeringAgent
-from app.cad.openscad_service import OpenSCADService
 import logging
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pydantic import BaseModel
+
+from app.cad.openscad_service import OpenSCADService
+from app.core.events import publish
+from app.core.orchestrator import (
+    EngineeringAgent,
+    run_machine_job,
+    run_prompt_job,
+    run_roller_job,
+)
+from app.core.queue import enqueue
+from app.core.schemas import MachineConfig, RollerConfig
 
 router = APIRouter()
 logger = logging.getLogger("app.api.routes")
 
+# In-process agent used for the /state read-only endpoint. Build dispatch
+# itself goes through RQ or BackgroundTasks so the API process stays light.
 agent = EngineeringAgent()
 
-# -----------------------------
-# Pydantic Models
-# -----------------------------
 
-class RollerConfig(BaseModel):
-    diameter: int = Field(180, gt=0)
-    width: int = Field(450, gt=0)
-    shaft: int = Field(40, gt=0)
-    material: str = Field("steel")
-
+# -----------------------------
+# Request models specific to the API surface
+# -----------------------------
 
 class PromptIn(BaseModel):
     prompt: str
@@ -29,6 +35,34 @@ class PromptIn(BaseModel):
 class SCADRenderRequest(BaseModel):
     scad: str
     output: str = "output.stl"
+
+
+# -----------------------------
+# Dispatch helpers
+# -----------------------------
+
+def _dispatch(
+    rq_func,
+    bg_func,
+    payload,
+    background_tasks: BackgroundTasks,
+    event_payload: dict,
+) -> dict:
+    """
+    Try the RQ queue first; if it's not configured or unreachable,
+    fall back to FastAPI BackgroundTasks. In either case publish a
+    job_queued lifecycle event.
+    """
+    job_id = enqueue(rq_func, payload)
+    if job_id is not None:
+        event_payload = {**event_payload, "transport": "rq", "job_id": job_id}
+        publish("job_queued", event_payload)
+        return {"status": "queued", "transport": "rq", "job_id": job_id}
+
+    background_tasks.add_task(bg_func, payload)
+    event_payload = {**event_payload, "transport": "background_task"}
+    publish("job_queued", event_payload)
+    return {"status": "queued", "transport": "background_task"}
 
 
 # -----------------------------
@@ -43,34 +77,58 @@ async def root():
 @router.post("/generate/roller")
 async def generate_roller(
     config: RollerConfig,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
 ):
+    """Queue a legacy single-roller build. 422 on invalid config."""
     try:
-        background_tasks.add_task(
+        return _dispatch(
+            run_roller_job,
             agent.generate_roller,
-            config.dict()
+            config.dict(),
+            background_tasks,
+            event_payload={"kind": "roller", "config": config.dict()},
         )
-
-        return {"status": "queued"}
-
     except Exception as e:
         logger.exception("Failed to queue roller generation")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/generate/machine")
+async def generate_machine(
+    config: MachineConfig,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Queue a full machine build (HTDS-P2 industrial or legacy).
+    422 on invalid config (typos, bad geometry, wrong types).
+    """
+    try:
+        payload = config.dict(exclude_none=True)
+        return _dispatch(
+            run_machine_job,
+            agent.generate_machine,
+            payload,
+            background_tasks,
+            event_payload={"kind": "machine", "machine": config.name},
+        )
+    except Exception as e:
+        logger.exception("Failed to queue machine generation")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/prompt")
 async def prompt(
     inp: PromptIn,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
 ):
     try:
-        background_tasks.add_task(
+        return _dispatch(
+            run_prompt_job,
             agent.handle_prompt,
-            inp.prompt
+            inp.prompt,
+            background_tasks,
+            event_payload={"kind": "prompt", "prompt": inp.prompt},
         )
-
-        return {"status": "queued"}
-
     except Exception as e:
         logger.exception("Failed to queue prompt")
         raise HTTPException(status_code=500, detail=str(e))
@@ -78,26 +136,18 @@ async def prompt(
 
 @router.get("/state")
 async def state():
+    # Re-read from disk so we see writes made by worker / watcher processes.
+    agent._reload_state()
     return agent.state
 
 
 @router.post("/render")
 async def render_scad(req: SCADRenderRequest):
-
+    """Render an arbitrary SCAD source string to STL. Output lands under outputs/STL/."""
     try:
-
-        output_path = f"outputs/stl/{req.output}"
-
-        output = OpenSCADService.render_scad_to_stl(
-            req.scad,
-            output_path
-        )
-
-        return {
-            "status": "success",
-            "output": str(output)
-        }
-
+        output_path = f"outputs/STL/{req.output}"
+        output = OpenSCADService.render_scad_to_stl(req.scad, output_path)
+        return {"status": "success", "output": str(output)}
     except Exception as e:
         logger.exception("Render failed")
         raise HTTPException(status_code=500, detail=str(e))

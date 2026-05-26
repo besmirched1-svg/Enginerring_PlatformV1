@@ -1,6 +1,6 @@
 $fn = 180;
 
-module roller(diameter=450, width=700, shaft=40) {
+module roller(diameter=240, width=700, shaft=50) {
     difference() {
         cylinder(d=diameter, h=width);
         translate([0, 0, -1])

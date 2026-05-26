@@ -1,16 +1,46 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # No exposed port by default — only the app + worker containers reach it.
+
   engineering-platform:
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      dockerfile: Docker/Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - output_data:/app/output
+      - output_data:/app/outputs
       - ./config:/app/config:ro
     restart: unless-stopped
     environment:
-      - OUTPUT_DIR=/app/output
+      - OUTPUT_DIR=/app/outputs
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Docker/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - output_data:/app/outputs
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    environment:
+      - OUTPUT_DIR=/app/outputs
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   output_data:

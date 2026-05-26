@@ -13,3 +13,5 @@ websockets==11.0.3
 pydantic==1.10.11
 pytest==7.4.0
 httpx==0.24.1
+redis==5.0.7
+rq==1.16.2

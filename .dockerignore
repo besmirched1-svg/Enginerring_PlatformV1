@@ -1,0 +1,39 @@
+# Keep the build context lean and reproducible.
+.git
+.gitignore
+.github
+.vscode
+.idea
+.pytest_cache
+
+# Python local state
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+
+# Local dev outputs (produced at runtime inside the container)
+outputs/
+output/
+logs/
+workspace/processing/
+workspace/failed/
+workspace/revisions/
+
+# Stale generated artifacts
+*.stl
+*.png
+*.dxf
+test.scad
+
+# Front-end build artifacts (none yet, but keep ignored if/when added)
+frontend/react-ui/node_modules
+frontend/react-ui/build
+frontend/react-ui/dist
+node_modules
+package-lock.json
+
+# Docs / VCS noise that the container doesn't need
+*.md
+!README.md
