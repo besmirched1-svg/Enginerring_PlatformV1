@@ -4,3 +4,17 @@
 2026-05-26 13:07:28,450 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
 2026-05-26 13:07:28,451 INFO app.workspace.watcher: Polling watcher started
 2026-05-26 13:12:33,188 INFO app.workspace.watcher: Stopping watcher
+2026-05-26 13:12:35,287 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 13:12:35,288 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 13:12:35,289 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 13:12:52,503 INFO app.workspace.watcher: New file detected: workspace\uploads\example_machine.yaml
+2026-05-26 13:12:52,503 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\example_machine.yaml
+2026-05-26 13:12:52,505 INFO app.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine.yaml
+2026-05-26 13:12:52,506 INFO app.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-05-26 13:12:52,507 INFO app.importers.yaml_importer: Normalized machine 'compression_line_v1' (components: ['frame', 'hopper', 'roller'])
+2026-05-26 13:12:52,516 INFO app.cad.generator: Generated assembly 'compression_line_v1' with components: ['frame', 'hopper', 'roller']
+2026-05-26 13:13:02,019 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\assembly.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\assembly.png
+2026-05-26 13:13:02,020 INFO app.bom.generator: Generating manufacturing Bill of Materials spreadsheet...
+2026-05-26 13:13:02,022 INFO app.bom.generator: BOM spreadsheet successfully saved to: outputs\BOM\assembly_bom.csv
+2026-05-26 13:13:02,023 INFO app.importers.yaml_importer: Build result: {'status': 'success', 'assembly': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\assembly.scad', 'components': {'roller': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\roller.scad', 'hopper': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\hopper.scad', 'frame': 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\frame.scad'}}
+2026-05-26 13:13:02,026 INFO app.workspace.ingestion: Moved to processing: example_machine.yaml
