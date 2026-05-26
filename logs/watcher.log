@@ -54,3 +54,77 @@ TypeError: ingest_file() missing 1 required positional argument: 'processing_dir
 2026-05-26 14:40:22,470 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\assembly_bom.csv (parts=3, total=186.1 kg, AUD 837.50)
 2026-05-26 14:40:22,473 INFO app.workspace.ingestion: Moved to processing: htds_p2_live.md
 2026-05-26 14:44:55,767 INFO app.workspace.watcher: Stopping watcher
+2026-05-26 14:45:00,104 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 14:45:00,105 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 14:45:00,108 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 14:45:08,189 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2_final.md
+2026-05-26 14:45:08,189 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2_final.md
+2026-05-26 14:45:08,195 INFO app.importers.markdown_importer: Loading industrial specification pack: workspace\uploads\htds_p2_final.md
+2026-05-26 14:45:08,195 INFO app.importers.markdown_importer: Successfully processed spec pack HTDS_P2-FAB-REV-A for orchestration loop
+2026-05-26 14:45:08,215 INFO app.cad.generator: Generated assembly 'machine' with components: ['frame', 'hopper', 'roller']
+2026-05-26 14:45:19,086 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\assembly.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\assembly.png
+2026-05-26 14:45:19,089 INFO app.core.orchestrator: Compiling isolated asset layer: roller
+2026-05-26 14:45:22,314 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\roller.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\roller.png
+2026-05-26 14:45:22,315 INFO app.core.orchestrator: Compiling isolated asset layer: hopper
+2026-05-26 14:45:23,283 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\hopper.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\hopper.png
+2026-05-26 14:45:23,284 INFO app.core.orchestrator: Compiling isolated asset layer: frame
+2026-05-26 14:45:25,246 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\frame.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\frame.png
+2026-05-26 14:45:25,248 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\HTDS_P2-FAB-REV-A_bom.csv (total=6550.0 kg, AUD $80145.00)
+2026-05-26 14:45:25,250 INFO app.core.dashboard: Live HTML control dashboard generated successfully at: outputs\index.html
+2026-05-26 14:45:25,253 INFO app.workspace.ingestion: Moved to processing: htds_p2_final.md
+2026-05-26 14:56:11,249 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2_constraints.md
+2026-05-26 14:56:11,249 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2_constraints.md
+2026-05-26 14:56:11,250 INFO app.importers.markdown_importer: Loading industrial specification pack: workspace\uploads\htds_p2_constraints.md
+2026-05-26 14:56:11,250 INFO app.importers.markdown_importer: Successfully processed spec pack HTDS_P2-FAB-REV-B for orchestration loop
+2026-05-26 14:56:11,260 INFO app.cad.generator: Generated assembly 'machine' with components: ['frame', 'hopper', 'roller']
+2026-05-26 14:56:19,427 INFO app.workspace.watcher: Stopping watcher
+2026-05-26 14:56:19,490 ERROR app.cad.renderer: Render failed
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\cad\renderer.py", line 62, in render_stl
+    subprocess.run(png_cmd, check=True, timeout=timeout)
+  File "C:\Users\chodk\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['openscad', '-o', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\IMAGES\\assembly.png', '--imgsize=1920,1440', '--render', '--projection=perspective', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\assembly.scad']' returned non-zero exit status 3221225786.
+2026-05-26 14:56:19,496 ERROR app.core.orchestrator: Heavy Industrial Assembly build failed
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\core\orchestrator.py", line 41, in generate_machine
+    render_stl(assembly_path)
+  File "C:\Users\chodk\openscad-engineering-platform\app\cad\renderer.py", line 62, in render_stl
+    subprocess.run(png_cmd, check=True, timeout=timeout)
+  File "C:\Users\chodk\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['openscad', '-o', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\IMAGES\\assembly.png', '--imgsize=1920,1440', '--render', '--projection=perspective', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\assembly.scad']' returned non-zero exit status 3221225786.
+2026-05-26 14:56:19,524 ERROR app.workspace.ingestion: Ingestion pipeline failed for htds_p2_constraints.md: Command '['openscad', '-o', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\IMAGES\\assembly.png', '--imgsize=1920,1440', '--render', '--projection=perspective', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\assembly.scad']' returned non-zero exit status 3221225786.
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\workspace\ingestion.py", line 28, in ingest_file
+    import_markdown(file_path)
+  File "C:\Users\chodk\openscad-engineering-platform\app\importers\markdown_importer.py", line 61, in import_markdown
+    return agent.generate_machine(machine_config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\chodk\openscad-engineering-platform\app\core\orchestrator.py", line 41, in generate_machine
+    render_stl(assembly_path)
+  File "C:\Users\chodk\openscad-engineering-platform\app\cad\renderer.py", line 62, in render_stl
+    subprocess.run(png_cmd, check=True, timeout=timeout)
+  File "C:\Users\chodk\AppData\Local\Programs\Python\Python311\Lib\subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['openscad', '-o', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\IMAGES\\assembly.png', '--imgsize=1920,1440', '--render', '--projection=perspective', 'C:\\Users\\chodk\\openscad-engineering-platform\\outputs\\SCAD\\assembly.scad']' returned non-zero exit status 3221225786.
+2026-05-26 14:56:19,528 INFO app.workspace.ingestion: Moved to processing: htds_p2_constraints.md
+2026-05-26 14:56:21,693 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 14:56:21,694 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 14:56:21,695 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 14:56:34,847 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2_constraints.md
+2026-05-26 14:56:34,848 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2_constraints.md
+2026-05-26 14:56:34,850 INFO app.importers.markdown_importer: Loading industrial specification pack: workspace\uploads\htds_p2_constraints.md
+2026-05-26 14:56:34,852 INFO app.importers.markdown_importer: Successfully processed spec pack HTDS_P2-FAB-REV-B for orchestration loop
+2026-05-26 14:56:34,863 INFO app.cad.generator: Generated assembly 'machine' with components: ['frame', 'hopper', 'roller']
+2026-05-26 14:56:42,998 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\assembly.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\assembly.png
+2026-05-26 14:56:43,001 INFO app.core.orchestrator: Compiling isolated asset layer: roller
+2026-05-26 14:56:45,825 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\roller.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\roller.png
+2026-05-26 14:56:45,825 INFO app.core.orchestrator: Compiling isolated asset layer: hopper
+2026-05-26 14:56:46,676 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\hopper.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\hopper.png
+2026-05-26 14:56:46,676 INFO app.core.orchestrator: Compiling isolated asset layer: frame
+2026-05-26 14:56:48,284 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\frame.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\frame.png
+2026-05-26 14:56:48,290 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\HTDS_P2-FAB-REV-B_bom.csv (total=3550.0 kg, AUD $44745.00)
+2026-05-26 14:56:48,291 INFO app.core.dashboard: Live HTML control dashboard generated successfully at: outputs\index.html
+2026-05-26 14:56:48,294 INFO app.workspace.ingestion: Moved to processing: htds_p2_constraints.md
+2026-05-26 14:59:47,067 INFO app.workspace.watcher: Stopping watcher

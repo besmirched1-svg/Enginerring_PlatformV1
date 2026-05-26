@@ -5,15 +5,25 @@ from datetime import datetime
 logger = logging.getLogger("app.core.dashboard")
 
 def generate_web_dashboard(machine_config: dict, output_dir: Path):
-    """
-    Generates a localized engineering control dashboard page for live asset reviews.
-    """
     html_path = output_dir / "index.html"
     machine_info = machine_config.get("machine", {})
     m_name = machine_info.get("name", "HTDS_Machine")
-    m_rev = machine_info.get("revision", "REV-A")
+    m_rev = machine_info.get("revision", "REV-B")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    comp_data = machine_config.get("compression_rollers", {})
+    gap = comp_data.get("compression_gap", 0)
+    skew = comp_data.get("alignment_tolerance", 0.0)
+    
+    # Enforce strict engineering alert thresholds
+    alert_html = ""
+    if gap > 80:
+        alert_html = "<div class='alert error'>CRITICAL CRASH DANGER: Compression Gap Exceeds 80mm Limits!</div>"
+    elif skew >= 1.0:
+        alert_html = "<div class='alert warning'>TOLERANCE NOTICE: High Shaft Alignment Skew Detected.</div>"
+    else:
+        alert_html = "<div class='alert success'>SYSTEM ALIGNED: Constraints Within Baseline Parameters.</div>"
+
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -24,6 +34,10 @@ def generate_web_dashboard(machine_config: dict, output_dir: Path):
         .main {{ flex: 1; padding: 30px; display: flex; flex-direction: column; align-items: center; justify-content: center; }}
         h1, h2 {{ color: #47a0ff; border-bottom: 1px solid #2d2d3d; padding-bottom: 8px; }}
         .metric {{ background: #22222e; padding: 12px; margin: 10px 0; border-radius: 6px; font-size: 14px; border-left: 4px solid #47a0ff; }}
+        .alert {{ padding: 12px; border-radius: 6px; font-weight: bold; font-size: 13px; margin: 15px 0; }}
+        .alert.success {{ background: #1b4332; color: #72efdd; border: 1px solid #2d6a4f; }}
+        .alert.warning {{ background: #5c3d00; color: #ffd166; border: 1px solid #ffb703; }}
+        .alert.error {{ background: #4c1d1d; color: #ff8fa3; border: 1px solid #c91818; }}
         img {{ max-width: 85%; max-height: 65vh; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.7); background: #0b0b0f; }}
         .btn {{ display: inline-block; background: #007acc; color: white; padding: 10px 18px; margin: 10px 5px 0 0; text-decoration: none; border-radius: 4px; font-weight: bold; }}
         .btn:hover {{ background: #0098ff; }}
@@ -32,10 +46,12 @@ def generate_web_dashboard(machine_config: dict, output_dir: Path):
 <body>
     <div class="sidebar">
         <h1>HTDS Platform</h1>
+        {alert_html}
         <h2>System Telemetry</h2>
         <div class="metric"><strong>Assembly ID:</strong> {m_name}</div>
         <div class="metric"><strong>Drawing Index:</strong> {m_rev}</div>
-        <div class="metric"><strong>Build Timestamp:</strong> {timestamp}</div>
+        <div class="metric"><strong>Target Gap:</strong> {gap} mm</div>
+        <div class="metric"><strong>Skew Tolerance:</strong> ±{skew} mm</div>
         <h2>Manufacturing Assets</h2>
         <a class="btn" href="STL/{m_name}_assembly.stl" download>Download 3D STL</a>
         <a class="btn" href="BOM/{m_name}_bom.csv" download>Procurement BOM</a>

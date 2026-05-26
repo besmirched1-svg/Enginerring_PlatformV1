@@ -159,6 +159,18 @@ module trommel_drum(
 trommel_drum();
 """
 
+COMPRESSION_ROLLER_TEMPLATE = """\
+$fn = 120;
+
+module compression_roller(diameter={{ diameter }}, width={{ width }}) {
+    // Solid nip roller. Axis runs along +X (rotated into place in the
+    // assembly so its length lies parallel to the main spindle axis).
+    cylinder(d=diameter, h=width);
+}
+
+compression_roller();
+"""
+
 SKID_FRAME_TEMPLATE = """\
 $fn = 24;
 
@@ -282,6 +294,18 @@ translate([{{ spindle_x }}, {{ spindle_y }}, {{ spindle_z }}])
             flight_turns={{ spindle.flight_turns }}
         );
 {% endif %}
+{% if has_compression %}
+use <compression_roller.scad>;
+// --- Compression Roller (nip above spindle, gap = {{ compression.compression_gap }} mm) ---
+// Skew angle simulates real-world mount alignment tolerance (deg about Z).
+rotate([0, 0, {{ skew_angle }}])
+    translate([{{ comp_x }}, {{ comp_y }}, {{ comp_z }}])
+        rotate([0, 90, 0])
+            compression_roller(
+                diameter={{ compression.diameter }},
+                width={{ compression.width }}
+            );
+{% endif %}
 """
 
 
@@ -326,7 +350,20 @@ SKID_FRAME_DEFAULTS = {
     "material": "mild_steel",
 }
 
-INDUSTRIAL_KEYS = {"spindle", "drum"}
+# Optional adjustable nip roller riding above the helical spindle.
+# compression_gap is bounded to [0, 80] mm; alignment_tolerance is a
+# floating-point mount-deviation in mm used to generate a small Z-axis skew.
+COMPRESSION_ROLLER_DEFAULTS = {
+    "diameter": 200,
+    "width": 4000,
+    "compression_gap": 20,
+    "alignment_tolerance": 0.0,
+    "material": "hardox_500",
+}
+COMPRESSION_GAP_MIN = 0
+COMPRESSION_GAP_MAX = 80
+
+INDUSTRIAL_KEYS = {"spindle", "drum", "compression_rollers"}
 
 
 def _merge(defaults: dict, override: dict | None) -> dict:
@@ -403,6 +440,14 @@ def generate_skid_frame_scad(config: dict) -> Path:
     return _write(SCAD_DIR / "frame.scad", text)
 
 
+def generate_compression_roller_scad(config: dict) -> Path:
+    cfg = _merge(COMPRESSION_ROLLER_DEFAULTS, config)
+    cfg["diameter"] = int(cfg["diameter"])
+    cfg["width"] = int(cfg["width"])
+    text = Template(COMPRESSION_ROLLER_TEMPLATE).render(**cfg)
+    return _write(SCAD_DIR / "compression_roller.scad", text)
+
+
 # ---------------------------------------------------------------------------
 # Assembly entry-point (schema-aware: legacy vs HTDS-P2 industrial)
 # ---------------------------------------------------------------------------
@@ -426,6 +471,7 @@ def _generate_industrial_assembly(machine: dict) -> dict:
     spindle_cfg = machine.get("spindle")
     drum_cfg = machine.get("drum")
     frame_cfg = machine.get("frame")
+    compression_cfg = machine.get("compression_rollers")
 
     if frame_cfg is not None:
         components["frame"] = generate_skid_frame_scad(frame_cfg)
@@ -433,6 +479,8 @@ def _generate_industrial_assembly(machine: dict) -> dict:
         components["drum"] = generate_drum_scad(drum_cfg)
     if spindle_cfg is not None:
         components["spindle"] = generate_spindle_scad(spindle_cfg)
+    if compression_cfg is not None:
+        components["compression_rollers"] = generate_compression_roller_scad(compression_cfg)
 
     spindle = _merge(SPINDLE_DEFAULTS, spindle_cfg) if spindle_cfg is not None else SPINDLE_DEFAULTS
     drum = _merge(DRUM_DEFAULTS, drum_cfg) if drum_cfg is not None else DRUM_DEFAULTS
@@ -458,20 +506,49 @@ def _generate_industrial_assembly(machine: dict) -> dict:
     spindle_y = drum_y
     spindle_z = drum_z
 
+    # Compression roller: optional nip roller riding above the spindle.
+    # Safe defaults preserve backward compatibility with configs that omit
+    # the `compression_rollers` block entirely.
+    compression = _merge(COMPRESSION_ROLLER_DEFAULTS, compression_cfg) if compression_cfg is not None else COMPRESSION_ROLLER_DEFAULTS
+    comp_diameter = int(compression["diameter"])
+    comp_width = int(compression["width"])
+    comp_gap = max(COMPRESSION_GAP_MIN, min(COMPRESSION_GAP_MAX, int(compression["compression_gap"])))
+    comp_tol = float(compression["alignment_tolerance"])
+    compression["compression_gap"] = comp_gap  # write-back the clamped value
+
+    # Vertical displacement: spindle_radius + roller_radius + clamped gap.
+    # Spindle radius is taken at the working envelope (flight OD).
+    spindle_radius = int(spindle["flight_od"]) // 2
+    roller_radius = comp_diameter // 2
+    comp_x = (rail_length - comp_width) // 2
+    comp_y = spindle_y
+    comp_z = spindle_z + spindle_radius + roller_radius + comp_gap
+
+    # Skew the roller about Z to simulate physical mount tolerance.
+    # Length basis is the roller's own axial width; this yields a tiny
+    # angle in degrees (~0.01 deg for typical 0.5 mm tolerance / 4 m width).
+    skew_angle = (comp_tol / comp_width) * 100.0 if comp_tol > 0 and comp_width > 0 else 0.0
+
     text = Template(ASSEMBLY_TEMPLATE_INDUSTRIAL).render(
         machine_name=name,
         has_frame=frame_cfg is not None,
         has_drum=drum_cfg is not None,
         has_spindle=spindle_cfg is not None,
+        has_compression=compression_cfg is not None,
         frame=frame,
         drum=drum,
         spindle=spindle,
+        compression=compression,
         drum_x=drum_x,
         drum_y=drum_y,
         drum_z=drum_z,
         spindle_x=spindle_x,
         spindle_y=spindle_y,
         spindle_z=spindle_z,
+        comp_x=comp_x,
+        comp_y=comp_y,
+        comp_z=comp_z,
+        skew_angle=f"{skew_angle:.6f}",
     )
 
     assembly_path = _write(SCAD_DIR / "assembly.scad", text)

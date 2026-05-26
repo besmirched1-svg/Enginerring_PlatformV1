@@ -8,22 +8,23 @@ agent = EngineeringAgent()
 
 def import_markdown(file_path: Path):
     """
-    Parses GFM tables from industrial engineering specifications,
-    extracts engineering revision numbers, and forces parametric heavy-mass calculations.
+    Parses complex GFM specification sheets. Extracts distinct data objects
+    for primary spindles, drum hulls, frames, and secondary compression rollers.
     """
     logger.info(f"Loading industrial specification pack: {file_path}")
     content = file_path.read_text(encoding="utf-8")
     
-    # Extract structural engineering revision metadata tags
     rev_match = re.search(r'Revision:\s*([^\n\r]+)', content)
-    revision_tag = rev_match.group(1).strip().replace(" ", "_") if rev_match else "REV-A"
+    revision_tag = rev_match.group(1).strip().replace(" ", "_") if rev_match else "REV-B"
     machine_id = f"HTDS_{revision_tag}"
     
+    # Isolate components into individual parameter blocks
     machine_config = {
         "machine": {"name": machine_id, "revision": revision_tag},
-        "roller": {},  # Maps to Helical Spindle
-        "hopper": {},  # Maps to Trommel Drum
-        "frame": {}    # Maps to Skid Chassis Frame
+        "roller": {},              # Primary Spindle
+        "hopper": {},              # Trommel Drum
+        "frame": {},               # Base Chassis
+        "compression_rollers": {}  # Secondary Roller Subsystem
     }
     
     sections = re.split(r'^##\s+', content, flags=re.MULTILINE)
@@ -33,12 +34,14 @@ def import_markdown(file_path: Path):
         heading = lines[0].lower() if lines else ""
         
         subsystem = None
-        if "spindle" in heading or "roller" in heading:
+        if "helical spindle" in heading:
             subsystem = "roller"
         elif "drum" in heading or "trommel" in heading:
             subsystem = "hopper"
         elif "frame" in heading or "chassis" in heading:
             subsystem = "frame"
+        elif "compression roller" in heading:
+            subsystem = "compression_rollers"
             
         if not subsystem:
             continue
@@ -52,7 +55,6 @@ def import_markdown(file_path: Path):
                 param_name = parts[0].lower().replace(" ", "_")
                 raw_val = parts[1]
                 
-                # Coerce alphanumeric measurements out to integers
                 clean_val = re.sub(r'[^\d.]', '', raw_val)
                 if clean_val:
                     machine_config[subsystem][param_name] = int(float(clean_val))
