@@ -1,2 +1,6 @@
 2026-05-26 10:54:24,845 INFO test: first entry
 2026-05-26 10:54:24,846 INFO test: second entry
+2026-05-26 13:07:28,449 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 13:07:28,450 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 13:07:28,451 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 13:12:33,188 INFO app.workspace.watcher: Stopping watcher
