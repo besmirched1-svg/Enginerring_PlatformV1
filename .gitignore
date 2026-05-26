@@ -9,3 +9,4 @@ Dockerfile.bak
 *.bak
 logs/*
 outputs/revisions/*
+*.stl
