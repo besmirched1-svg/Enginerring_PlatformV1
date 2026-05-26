@@ -1,8 +1,10 @@
 import logging
+import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
-from app.api.routes import router
+from app.api.routes import router, register_orchestrator_reference
+from app.core.orchestrator import EngineeringOrchestrator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("engine.main")
@@ -12,7 +14,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configure global cross-origin resource matrix rules
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,9 +21,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Include traditional monitoring endpoints context
-app.include_router(router)
 
 class WebSocketEventBroadcaster:
     def __init__(self):
@@ -38,23 +36,33 @@ class WebSocketEventBroadcaster:
             self.active_connections.remove(websocket)
         logger.info("Telemetry node detached from cluster mesh context.")
 
-    async def broadcast(self, event_name: str, payload: dict):
+    def broadcast(self, event_name: str, payload: dict):
         message = {"event": event_name, "data": payload}
+        logger.info(f"[CLUSTER EVENT] {event_name} generated.")
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
         for connection in list(self.active_connections):
             try:
-                await connection.send_json(message)
+                if loop and loop.is_running():
+                    asyncio.run_coroutine_threadsafe(connection.send_json(message), loop)
+                else:
+                    asyncio.run(connection.send_json(message))
             except Exception:
                 if connection in self.active_connections:
                     self.active_connections.remove(connection)
 
 broadcaster = WebSocketEventBroadcaster()
+orchestrator_instance = EngineeringOrchestrator(broadcaster)
+register_orchestrator_reference(orchestrator_instance)
+app.include_router(router)
 
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):
     await broadcaster.connect(websocket)
     try:
         while True:
-            # Keep-alive loop reading frames
             await websocket.receive_text()
     except WebSocketDisconnect:
         broadcaster.disconnect(websocket)
