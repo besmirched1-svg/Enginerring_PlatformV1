@@ -1,3 +1,4 @@
+import os
 import logging
 import redis
 from fastapi import APIRouter, HTTPException, Depends
@@ -8,26 +9,20 @@ from app.core.promotion import get_current_champion
 logger = logging.getLogger("engine.api")
 router = APIRouter(prefix="/improve", tags=["improvement-loop"])
 
-# Safe dependency injection helper for Redis resource connectivity
 def get_redis_client() -> redis.Redis:
-    # In production, this pulls from a unified connection pool matrix
-    return redis.Redis(host="localhost", port=6379)
+    # Read host dynamically from container environment variables with a cross-platform container fallback
+    redis_host = os.getenv("REDIS_HOST", "redis")
+    redis_port = int(os.getenv("REDIS_PORT", 6379))
+    return redis.Redis(host=redis_host, port=redis_port)
 
 @router.get("/status/{machine_name}", response_model=Dict[str, Any])
 def get_improvement_status(machine_name: str, r_client: redis.Redis = Depends(get_redis_client)) -> Dict[str, Any]:
     """
-    Retrieves the complete engineering status for a specific machine taxonomy,
-    including the active champion, latest optimization attempts, and historical metadata.
+    Retrieves the complete engineering status for a specific machine taxonomy.
     """
     try:
-        # 1. Fetch current runtime champion pointers
         champion = get_current_champion(machine_name)
-        
-        # 2. Extract corresponding optimization telemetry from shared memory space
         chain_manager = ImprovementChainManager(r_client)
-        # Deduce the deterministic loop hash key used across iterations
-        # Production systems fetch this correlation mapper from database records;
-        # Fallback to direct resolution for baseline API contracts.
         mock_chain_id = f"chain_{machine_name}_default"
         chain_state = chain_manager.get_chain(mock_chain_id)
         
@@ -44,8 +39,7 @@ def get_improvement_status(machine_name: str, r_client: redis.Redis = Depends(ge
 @router.post("/abort/{chain_id}", response_model=Dict[str, Any])
 def abort_improvement_chain(chain_id: str, reason: str = "Operator manual override intervention", r_client: redis.Redis = Depends(get_redis_client)) -> Dict[str, Any]:
     """
-    Emergency operator endpoint. Instantly marks a running loop as aborted,
-    preventing background workers from queueing subsequent design modifications.
+    Emergency operator endpoint to mark a running loop as aborted.
     """
     try:
         chain_manager = ImprovementChainManager(r_client)
@@ -61,10 +55,7 @@ def abort_improvement_chain(chain_id: str, reason: str = "Operator manual overri
                 "message": f"Chain is already in an immutable state: {chain_state.get('status')}"
             }
             
-        # Apply permanent termination locks down onto the tracking record
         chain_manager.mark_aborted(chain_id, reason)
-        logger.warning(f"Operator manually terminated active optimization track: {chain_id}")
-        
         return {
             "chain_id": chain_id,
             "status": "aborted",
