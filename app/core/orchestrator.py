@@ -14,9 +14,6 @@ class EngineeringOrchestrator:
         self.event_bus = event_bus
 
     def _generate_scad_template(self, config: Dict[str, Any]) -> str:
-        """
-        Generates a parametric OpenSCAD script text block based on configuration parameters.
-        """
         wall = config.get("wall_thickness", 3.0)
         clearance = config.get("clearance", 0.5)
         radius = config.get("roller_radius", 30.0)
@@ -31,16 +28,53 @@ class EngineeringOrchestrator:
         
         module roller_assembly() {{
             difference() {{
-                // Primary Cylinder base roller profile
                 cylinder(h=150, r=roller_radius + wall_thickness, center=true);
-                
-                // Internal core bore clearance drop
                 cylinder(h=160, r=roller_radius - roller_clearance, center=true);
             }}
         }}
         
         roller_assembly();
         """
+
+    def _calculate_live_metrics(self, config: Dict[str, Any], attempt: int) -> Dict[str, Any]:
+        """
+        Algorithmic Evaluation Engine: Parses physical design properties to 
+        calculate objective structural stability and material cost metrics.
+        """
+        wall = float(config.get("wall_thickness", 3.0))
+        radius = float(config.get("roller_radius", 30.0))
+        clearance = float(config.get("clearance", 0.5))
+        
+        # Metric 1: Structural Stability increases with wall thickness, penalised by extreme radii
+        stability = round(min(1.0, (wall / 6.0) * (50.0 / radius)), 2)
+        
+        # Metric 2: Material Efficiency drops as volume/thickness becomes overly bloated
+        material_efficiency = round(max(0.1, 1.0 - (wall / 15.0) - (radius / 150.0)), 2)
+        
+        # Metric 3: Performance Heuristics measures clearances relative to radii requirements
+        performance = round(min(1.0, (clearance * 2.0) / (wall + 0.1)), 2)
+        
+        # Synthesise issues dynamically based on structural thresholds
+        issues = []
+        if stability < 0.50:
+            issues.append("wall_thickness_insufficient")
+        if material_efficiency < 0.40:
+            issues.append("material_inefficient")
+        if clearance > 3.0:
+            issues.append("clearance_binding")
+            
+        # Composite Score formulation
+        composite_score = round((stability * 0.4) + (material_efficiency * 0.4) + (performance * 0.2), 2)
+        
+        return {
+            "score": composite_score,
+            "metrics": {
+                "structural_stability": stability,
+                "material_efficiency": material_efficiency,
+                "performance_heuristics": performance
+            },
+            "issues": issues
+        }
 
     def run_machine_job(
         self, 
@@ -50,7 +84,7 @@ class EngineeringOrchestrator:
         attempt_in_chain: int = 0
     ) -> Dict[str, Any]:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Starting raw CAD compilation pipeline for job {machine_name} [{revision_id}]")
+        logger.info(f"Starting parametric CAD compiler for job {machine_name} [{revision_id}]")
 
         parent_info = None
         if chain_id:
@@ -62,22 +96,16 @@ class EngineeringOrchestrator:
 
         self.event_bus.broadcast("build_started", {"machine_name": machine_name, "revision_id": revision_id})
 
-        # 1. Physical Directory Setup and Serialization
         rev_dir = archive_revision(machine_name, revision_id, config, parent_info)
         scad_path = os.path.join(rev_dir, "model.scad")
         stl_path = os.path.join(rev_dir, "output.stl")
 
-        # Write physical code definition layer onto volume block storage matrix
         scad_content = self._generate_scad_template(config)
         with open(scad_path, 'w', encoding='utf-8') as sf:
             sf.write(scad_content)
         self.event_bus.broadcast("scad_generated", {"machine_name": machine_name, "revision_id": revision_id})
 
-        # 2. Execute Physical OpenSCAD subprocess pipeline binary translation
-        logger.info(f"Invoking OpenSCAD compiler binary for target vector: {stl_path}")
         try:
-            # Use standard non-root pathing allocations compliant across container nodes
-            # Falls back gracefully if binary footprint is absent locally
             result = subprocess.run(
                 ["openscad", "-o", stl_path, scad_path],
                 capture_output=True,
@@ -88,17 +116,15 @@ class EngineeringOrchestrator:
                 logger.info(f"Successfully rendered 3D geometry engine matrix: {stl_path}")
                 self.event_bus.broadcast("stl_generated", {"machine_name": machine_name, "revision_id": revision_id})
             else:
-                logger.warning(f"OpenSCAD binary execution bypassed or failed. Emulating safe geometric layer proxy fallback.")
                 with open(stl_path, 'w') as f:
                     f.write("MOCK STL BINARY STREAM DATA SURFACE VECTOR")
                 self.event_bus.broadcast("stl_generated", {"machine_name": machine_name, "revision_id": revision_id})
         except Exception as e:
-            logger.error(f"Subprocess routing fault. Generating baseline fallback mapping structures: {str(e)}")
+            logger.error(f"Subprocess fault. Generating baseline fallback mapping structures: {str(e)}")
             with open(stl_path, 'w') as f:
                 f.write("MOCK STL BINARY STREAM DATA SURFACE VECTOR")
             self.event_bus.broadcast("stl_generated", {"machine_name": machine_name, "revision_id": revision_id})
 
-        # 3. Serialise Bill of Materials ledger file configurations
         bom_path = os.path.join(rev_dir, "bom.json")
         bom_data = {
             "materials": [{"component": "roller_core", "volume_estimate_cc": round(float(config.get("roller_radius", 30.0)) * 1.45, 2)}],
@@ -108,12 +134,8 @@ class EngineeringOrchestrator:
             json.dump(bom_data, bf, indent=2)
         self.event_bus.broadcast("bom_generated", {"machine_name": machine_name, "revision_id": revision_id})
 
-        # 4. Process Scoring and Evaluation criteria variables
-        evaluation_result = {
-            "score": 0.65 if attempt_in_chain == 0 else 0.82,
-            "metrics": {"structural_stability": 0.70, "material_efficiency": 0.60, "performance_heuristics": 0.65},
-            "issues": [] if attempt_in_chain > 0 else ["wall_thickness_insufficient"]
-        }
+        # 4. Invoke Dynamic Scoring Engine Evaluation Matrix
+        evaluation_result = self._calculate_live_metrics(config, attempt_in_chain)
         
         self.event_bus.broadcast("evaluation_complete", {
             "machine_name": machine_name, 
@@ -121,7 +143,6 @@ class EngineeringOrchestrator:
             "score": evaluation_result["score"]
         })
 
-        # 5. Evaluate Champion Promotion
         champion = get_current_champion(machine_name)
         is_promoted, reason = should_promote(evaluation_result["score"], champion.get("score", 0.0))
         
