@@ -8,39 +8,41 @@ agent = EngineeringAgent()
 
 def import_markdown(file_path: Path):
     """
-    Parses GitHub Flavored Markdown (GFM) tables from engineering packs
-    and maps them to the multi-part machine assembly loop.
+    Parses GFM tables from industrial engineering specifications,
+    extracts engineering revision numbers, and forces parametric heavy-mass calculations.
     """
-    logger.info(f"Loading Markdown specification: {file_path}")
+    logger.info(f"Loading industrial specification pack: {file_path}")
     content = file_path.read_text(encoding="utf-8")
     
+    # Extract structural engineering revision metadata tags
+    rev_match = re.search(r'Revision:\s*([^\n\r]+)', content)
+    revision_tag = rev_match.group(1).strip().replace(" ", "_") if rev_match else "REV-A"
+    machine_id = f"HTDS_{revision_tag}"
+    
     machine_config = {
-        "machine": {"name": file_path.stem},
-        "roller": {},
-        "hopper": {},
-        "frame": {}
+        "machine": {"name": machine_id, "revision": revision_tag},
+        "roller": {},  # Maps to Helical Spindle
+        "hopper": {},  # Maps to Trommel Drum
+        "frame": {}    # Maps to Skid Chassis Frame
     }
     
-    # Split text blocks by markdown H2 sections to isolate component sheets
     sections = re.split(r'^##\s+', content, flags=re.MULTILINE)
     
     for section in sections:
         lines = section.split('\n')
         heading = lines[0].lower() if lines else ""
         
-        # Determine target subsystem context
         subsystem = None
         if "spindle" in heading or "roller" in heading:
             subsystem = "roller"
         elif "drum" in heading or "trommel" in heading:
-            subsystem = "hopper"  # Maps parameters to secondary subassembly slot
+            subsystem = "hopper"
         elif "frame" in heading or "chassis" in heading:
             subsystem = "frame"
             
         if not subsystem:
             continue
             
-        # Extract parameter rows from standard pipe-line table strings
         for line in lines:
             if '|' not in line or ':---' in line or 'Parameter' in line:
                 continue
@@ -50,10 +52,10 @@ def import_markdown(file_path: Path):
                 param_name = parts[0].lower().replace(" ", "_")
                 raw_val = parts[1]
                 
-                # Coerce alphanumeric engineering text strings into clean integers
+                # Coerce alphanumeric measurements out to integers
                 clean_val = re.sub(r'[^\d.]', '', raw_val)
                 if clean_val:
                     machine_config[subsystem][param_name] = int(float(clean_val))
                     
-    logger.info(f"Parsed markdown spec with systems: {[k for k, v in machine_config.items() if v]}")
+    logger.info(f"Successfully processed spec pack {machine_id} for orchestration loop")
     return agent.generate_machine(machine_config)

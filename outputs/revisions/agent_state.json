@@ -2,39 +2,28 @@
   "status": "idle",
   "last_build": {
     "type": "machine",
-    "name": "machine",
+    "name": "HTDS_P2-FAB-REV-A",
     "components": [
       "frame",
       "hopper",
       "roller"
     ],
-    "timestamp": "2026-05-26T04:40:22.470439Z",
+    "timestamp": "2026-05-26T04:45:25.250378Z",
     "config": {
       "machine": {
-        "name": "htds_p2_live"
+        "name": "HTDS_P2-FAB-REV-A",
+        "revision": "P2-FAB-REV-A"
       },
       "roller": {
         "length": 2400,
-        "shaft_diameter": 250,
-        "max_flight_diameter": 1200,
-        "min_flight_diameter": 300,
-        "flight_thickness": 12,
-        "intake_pitch": 200,
-        "compression_pitch": 150,
-        "discharge_pitch": 100
+        "shaft_diameter": 250
       },
       "hopper": {
         "diameter": 1500,
-        "length": 4000,
-        "shell_thickness": 8,
-        "zone1_break": 40,
-        "zone2_separation": 20,
-        "zone3_cleaning": 10
+        "length": 4000
       },
       "frame": {
-        "length": 7250,
-        "width": 2450,
-        "height": 600
+        "length": 7250
       }
     }
   }

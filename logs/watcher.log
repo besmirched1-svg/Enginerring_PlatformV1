@@ -41,3 +41,16 @@ Traceback (most recent call last):
     ingest_file(file_path)
 TypeError: ingest_file() missing 1 required positional argument: 'processing_dir'
 2026-05-26 14:32:47,518 INFO app.workspace.watcher: Stopping watcher
+2026-05-26 14:32:49,879 INFO app.workspace.watcher: Initializing polling watcher...
+2026-05-26 14:32:49,880 INFO app.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-05-26 14:32:49,882 INFO app.workspace.watcher: Polling watcher started
+2026-05-26 14:40:13,518 INFO app.workspace.watcher: New file detected: workspace\uploads\htds_p2_live.md
+2026-05-26 14:40:13,518 INFO app.workspace.ingestion: Ingesting file: workspace\uploads\htds_p2_live.md
+2026-05-26 14:40:13,522 INFO app.importers.markdown_importer: Loading Markdown specification: workspace\uploads\htds_p2_live.md
+2026-05-26 14:40:13,524 INFO app.importers.markdown_importer: Parsed markdown spec with systems: ['machine', 'roller', 'hopper', 'frame']
+2026-05-26 14:40:13,536 INFO app.cad.generator: Generated assembly 'machine' with components: ['frame', 'hopper', 'roller']
+2026-05-26 14:40:22,466 INFO app.cad.renderer: Render complete: stl=C:\Users\chodk\openscad-engineering-platform\outputs\STL\assembly.stl png=C:\Users\chodk\openscad-engineering-platform\outputs\IMAGES\assembly.png
+2026-05-26 14:40:22,467 INFO app.bom.generator: Generating manufacturing Bill of Materials spreadsheet...
+2026-05-26 14:40:22,470 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\assembly_bom.csv (parts=3, total=186.1 kg, AUD 837.50)
+2026-05-26 14:40:22,473 INFO app.workspace.ingestion: Moved to processing: htds_p2_live.md
+2026-05-26 14:44:55,767 INFO app.workspace.watcher: Stopping watcher
