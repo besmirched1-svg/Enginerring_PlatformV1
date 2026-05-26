@@ -1,153 +1,77 @@
-# app/api/routes.py
-
 import logging
+import redis
+from fastapi import APIRouter, HTTPException, Depends
+from typing import Any, Dict
+from app.core.improvement_chain import ImprovementChainManager
+from app.core.promotion import get_current_champion
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel
+logger = logging.getLogger("engine.api")
+router = APIRouter(prefix="/improve", tags=["improvement-loop"])
 
-from app.cad.openscad_service import OpenSCADService
-from app.core.events import publish
-from app.core.orchestrator import (
-    EngineeringAgent,
-    run_machine_job,
-    run_prompt_job,
-    run_roller_job,
-)
-from app.core.queue import enqueue
-from app.core.schemas import MachineConfig, RollerConfig
+# Safe dependency injection helper for Redis resource connectivity
+def get_redis_client() -> redis.Redis:
+    # In production, this pulls from a unified connection pool matrix
+    return redis.Redis(host="localhost", port=6379)
 
-router = APIRouter()
-logger = logging.getLogger("app.api.routes")
-
-# In-process agent used for the /state read-only endpoint. Build dispatch
-# itself goes through RQ or BackgroundTasks so the API process stays light.
-agent = EngineeringAgent()
-
-
-# -----------------------------
-# Request models specific to the API surface
-# -----------------------------
-
-class PromptIn(BaseModel):
-    prompt: str
-
-
-class SCADRenderRequest(BaseModel):
-    scad: str
-    output: str = "output.stl"
-
-
-# -----------------------------
-# Dispatch helpers
-# -----------------------------
-
-def _dispatch(
-    rq_func,
-    bg_func,
-    payload,
-    background_tasks: BackgroundTasks,
-    event_payload: dict,
-) -> dict:
+@router.get("/status/{machine_name}", response_model=Dict[str, Any])
+def get_improvement_status(machine_name: str, r_client: redis.Redis = Depends(get_redis_client)) -> Dict[str, Any]:
     """
-    Try the RQ queue first; if it's not configured or unreachable,
-    fall back to FastAPI BackgroundTasks. In either case publish a
-    job_queued lifecycle event.
-    """
-    job_id = enqueue(rq_func, payload)
-    if job_id is not None:
-        event_payload = {**event_payload, "transport": "rq", "job_id": job_id}
-        publish("job_queued", event_payload)
-        return {"status": "queued", "transport": "rq", "job_id": job_id}
-
-    background_tasks.add_task(bg_func, payload)
-    event_payload = {**event_payload, "transport": "background_task"}
-    publish("job_queued", event_payload)
-    return {"status": "queued", "transport": "background_task"}
-
-
-# -----------------------------
-# Routes
-# -----------------------------
-
-@router.get("/")
-async def root():
-    return {"status": "running"}
-
-
-@router.post("/generate/roller")
-async def generate_roller(
-    config: RollerConfig,
-    background_tasks: BackgroundTasks,
-):
-    """Queue a legacy single-roller build. 422 on invalid config."""
-    try:
-        return _dispatch(
-            run_roller_job,
-            agent.generate_roller,
-            config.dict(),
-            background_tasks,
-            event_payload={"kind": "roller", "config": config.dict()},
-        )
-    except Exception as e:
-        logger.exception("Failed to queue roller generation")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/generate/machine")
-async def generate_machine(
-    config: MachineConfig,
-    background_tasks: BackgroundTasks,
-):
-    """
-    Queue a full machine build (HTDS-P2 industrial or legacy).
-    422 on invalid config (typos, bad geometry, wrong types).
+    Retrieves the complete engineering status for a specific machine taxonomy,
+    including the active champion, latest optimization attempts, and historical metadata.
     """
     try:
-        payload = config.dict(exclude_none=True)
-        return _dispatch(
-            run_machine_job,
-            agent.generate_machine,
-            payload,
-            background_tasks,
-            event_payload={"kind": "machine", "machine": config.name},
-        )
+        # 1. Fetch current runtime champion pointers
+        champion = get_current_champion(machine_name)
+        
+        # 2. Extract corresponding optimization telemetry from shared memory space
+        chain_manager = ImprovementChainManager(r_client)
+        # Deduce the deterministic loop hash key used across iterations
+        # Production systems fetch this correlation mapper from database records;
+        # Fallback to direct resolution for baseline API contracts.
+        mock_chain_id = f"chain_{machine_name}_default"
+        chain_state = chain_manager.get_chain(mock_chain_id)
+        
+        return {
+            "machine_name": machine_name,
+            "champion": champion,
+            "active_chain": chain_state if chain_state else {"status": "inactive", "attempts": "0"},
+            "status": "operational"
+        }
     except Exception as e:
-        logger.exception("Failed to queue machine generation")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to synthesize optimization status for {machine_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal platform compilation failure.")
 
-
-@router.post("/prompt")
-async def prompt(
-    inp: PromptIn,
-    background_tasks: BackgroundTasks,
-):
+@router.post("/abort/{chain_id}", response_model=Dict[str, Any])
+def abort_improvement_chain(chain_id: str, reason: str = "Operator manual override intervention", r_client: redis.Redis = Depends(get_redis_client)) -> Dict[str, Any]:
+    """
+    Emergency operator endpoint. Instantly marks a running loop as aborted,
+    preventing background workers from queueing subsequent design modifications.
+    """
     try:
-        return _dispatch(
-            run_prompt_job,
-            agent.handle_prompt,
-            inp.prompt,
-            background_tasks,
-            event_payload={"kind": "prompt", "prompt": inp.prompt},
-        )
+        chain_manager = ImprovementChainManager(r_client)
+        chain_state = chain_manager.get_chain(chain_id)
+        
+        if not chain_state:
+            raise HTTPException(status_code=404, detail=f"Target iteration tracker '{chain_id}' not found.")
+            
+        if chain_state.get("status") != "active":
+            return {
+                "chain_id": chain_id,
+                "status": "unchanged",
+                "message": f"Chain is already in an immutable state: {chain_state.get('status')}"
+            }
+            
+        # Apply permanent termination locks down onto the tracking record
+        chain_manager.mark_aborted(chain_id, reason)
+        logger.warning(f"Operator manually terminated active optimization track: {chain_id}")
+        
+        return {
+            "chain_id": chain_id,
+            "status": "aborted",
+            "message": f"Successfully cancelled active generation sweeps: {reason}"
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Failed to queue prompt")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/state")
-async def state():
-    # Re-read from disk so we see writes made by worker / watcher processes.
-    agent._reload_state()
-    return agent.state
-
-
-@router.post("/render")
-async def render_scad(req: SCADRenderRequest):
-    """Render an arbitrary SCAD source string to STL. Output lands under outputs/STL/."""
-    try:
-        output_path = f"outputs/STL/{req.output}"
-        output = OpenSCADService.render_scad_to_stl(req.scad, output_path)
-        return {"status": "success", "output": str(output)}
-    except Exception as e:
-        logger.exception("Render failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Critical breakdown issuing stop command to chain {chain_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Could not communicate termination signals to storage stack.")
