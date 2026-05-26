@@ -2,16 +2,16 @@
   "status": "idle",
   "last_build": {
     "type": "machine",
-    "name": "HTDS_P2-FAB-REV-B",
+    "name": "HTDS_P2-CRITICAL-ERR-REV-C",
     "components": [
       "compression_rollers",
       "frame"
     ],
-    "timestamp": "2026-05-26T05:00:00.667966Z",
+    "timestamp": "2026-05-26T05:01:45.948420Z",
     "config": {
       "machine": {
-        "name": "HTDS_P2-FAB-REV-B",
-        "revision": "P2-FAB-REV-B"
+        "name": "HTDS_P2-CRITICAL-ERR-REV-C",
+        "revision": "P2-CRITICAL-ERR-REV-C"
       },
       "roller": {
         "length": 2400,
@@ -27,8 +27,8 @@
       "compression_rollers": {
         "diameter": 450,
         "width": 700,
-        "compression_gap": 25,
-        "alignment_tolerance": 1
+        "compression_gap": 125,
+        "alignment_tolerance": 0
       }
     }
   }
