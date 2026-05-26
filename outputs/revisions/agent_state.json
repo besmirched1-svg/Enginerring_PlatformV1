@@ -1,5 +1,35 @@
 {
-  "status": "error",
-  "last_build": null,
-  "error": "OpenSCAD not found in PATH"
+  "status": "idle",
+  "last_build": {
+    "type": "machine",
+    "name": "compression_line_v1",
+    "components": [
+      "frame",
+      "hopper",
+      "roller"
+    ],
+    "timestamp": "2026-05-26T00:51:41.475265Z",
+    "config": {
+      "name": "compression_line_v1",
+      "frame": {
+        "length": 1400,
+        "width": 700,
+        "height": 900,
+        "profile": 40
+      },
+      "roller": {
+        "diameter": 240,
+        "width": 700,
+        "shaft": 50,
+        "material": "stainless_316"
+      },
+      "hopper": {
+        "top_width": 500,
+        "bottom_width": 150,
+        "height": 350,
+        "wall": 4,
+        "material": "stainless_304"
+      }
+    }
+  }
 }

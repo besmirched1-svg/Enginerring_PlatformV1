@@ -7,7 +7,8 @@ RUN apt-get update && \
         openscad \
         ca-certificates \
         build-essential \
-        libgl1-mesa-glx \
+        libgl1 \
+        libglu1-mesa \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

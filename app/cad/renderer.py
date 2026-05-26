@@ -1,59 +1,111 @@
 # app/cad/renderer.py
+
 import subprocess
-from pathlib import Path
 import shutil
 import logging
-import os
 
-logger = logging.getLogger("app.cad.renderer")
+from pathlib import Path
 
-BASE_OUTPUT = Path(os.getenv("OUTPUT_DIR", "output")).resolve()
-STL_DIR = BASE_OUTPUT / "stl"
+from app.core.paths import (
+    STL_DIR,
+    PNG_DIR,
+    PREVIEW_DIR
+)
 
+logger = logging.getLogger(
+    "app.cad.renderer"
+)
 
-def render_stl(scad_path, timeout: int = 60):
-    """
-    Render an STL file from a SCAD file using OpenSCAD.
-    Includes:
-    - openscad existence check
-    - timeout protection
-    - safe subprocess invocation
-    - structured logging
-    """
+def render_stl(
+    scad_path,
+    timeout=60
+):
 
-    # Ensure OpenSCAD exists
-    if shutil.which("openscad") is None:
-        raise RuntimeError("OpenSCAD not found in PATH")
+    if shutil.which(
+        "openscad"
+    ) is None:
 
-    # Ensure output directory exists
-    STL_DIR.mkdir(parents=True, exist_ok=True)
-
-    output = STL_DIR / (scad_path.stem + ".stl")
-
-    cmd = [
-        "openscad",
-        "-o", str(output),
-        str(scad_path)
-    ]
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            timeout=timeout
+        raise RuntimeError(
+            "OpenSCAD not found"
         )
 
-        # Log first 200 chars of stdout for debugging
-        if proc.stdout:
-            logger.info("OpenSCAD output: %s", proc.stdout.decode()[:200])
+    stl_output = STL_DIR / (
+        scad_path.stem + ".stl"
+    )
 
-    except subprocess.CalledProcessError as e:
-        logger.error("OpenSCAD failed: %s", e.stderr.decode()[:400])
-        raise RuntimeError("OpenSCAD rendering failed") from e
+    png_output = PNG_DIR / (
+        scad_path.stem + ".png"
+    )
 
-    except subprocess.TimeoutExpired:
-        logger.error("OpenSCAD timed out")
-        raise RuntimeError("OpenSCAD rendering timed out")
+    preview_output = (
+        PREVIEW_DIR /
+        (scad_path.stem + ".png")
+    )
 
-    return output
+    try:
+
+        subprocess.run(
+
+            [
+                "openscad",
+
+                "-o",
+                str(stl_output),
+
+                str(scad_path)
+            ],
+
+            check=True,
+            timeout=timeout
+
+        )
+
+        subprocess.run(
+
+            [
+                "openscad",
+
+                "-o",
+                str(png_output),
+
+                "--imgsize=1200,900",
+
+                str(scad_path)
+            ],
+
+            check=True,
+            timeout=timeout
+
+        )
+
+        shutil.copy2(
+
+            png_output,
+
+            preview_output
+
+        )
+
+        logger.info(
+            "Render complete"
+        )
+
+        return {
+
+            "stl": str(
+                stl_output
+            ),
+
+            "png": str(
+                png_output
+            )
+
+        }
+
+    except Exception:
+
+        logger.exception(
+            "Render failed"
+        )
+
+        raise

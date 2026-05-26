@@ -1,23 +1,28 @@
 # app/utilities/logging.py
+
 import logging
 import sys
 
+from app.core.paths import LOG_DIR
+
 def configure_logging():
-    """
-    Configure global logging for the entire platform.
-    Ensures consistent formatting across all modules.
-    """
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
-    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
 
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    handler.setFormatter(logging.Formatter(fmt))
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(formatter)
 
-    # Avoid duplicate handlers if reload happens
-    if not root.handlers:
-        root.addHandler(handler)
-    else:
-        root.handlers = [handler]
+    logfile = logging.FileHandler(
+        LOG_DIR / "engineering_platform.log"
+    )
+    logfile.setFormatter(formatter)
+
+    root.handlers = [
+        console,
+        logfile
+    ]
