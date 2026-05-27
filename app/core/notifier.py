@@ -17,7 +17,7 @@ def dispatch_cluster_alert(title: str, text: str, alert_level: str = "INFO") -> 
         logger.info(f"[MOCK NOTIFIER - {alert_level}] {title}: {text}")
         return True
         
-    emoji = "ℹ️" 
+    emoji = "ℹ️"
     if alert_level == "WARNING": emoji = "⚠️"
     elif alert_level == "CRITICAL": emoji = "🚨"
     elif alert_level == "SUCCESS": emoji = "🏆"
@@ -35,7 +35,7 @@ def dispatch_cluster_alert(title: str, text: str, alert_level: str = "INFO") -> 
     
     try:
         res = requests.post(GLOBAL_WEBHOOK_URL, json=payload, headers={"Content-Type": "application/json"}, timeout=5.0)
-        if res.status_code in [200, 204]:
+        if res.status_code in [200, 201, 204]:
             logger.info("Outbound cluster notification dispatched successfully.")
             return True
         logger.warning(f"External communications endpoint rejected payload context: {res.status_code}")
