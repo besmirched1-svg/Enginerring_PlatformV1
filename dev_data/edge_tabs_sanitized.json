@@ -1,0 +1,14 @@
+[
+  {
+    "tabId": -1,
+    "isCurrent": true,
+    "title": "",
+    "url": ""
+  },
+  {
+    "tabId": -1,
+    "isCurrent": false,
+    "title": "credential manager - Search",
+    "url": "https://www.bing.com/search"
+  }
+]
