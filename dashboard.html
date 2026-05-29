@@ -376,29 +376,38 @@ function loadSTL(machineName, revisionId) {
 
     const loader = new THREE.STLLoader();
 
-    const url =
-        `http://localhost:8000/improve/download/${machineName}/${revisionId}`;
+    const url = `/improve/download/${machineName}/${revisionId}`;
 
-    loader.load(url, function(geometry) {
+    loader.load(
+        url,
+        function(geometry) {
 
-        if (currentMesh) {
-            scene.remove(currentMesh);
+            if (currentMesh) {
+                scene.remove(currentMesh);
+            }
+
+            geometry.center();
+
+            const material = new THREE.MeshStandardMaterial({
+                color: 0xff9f1c,
+                roughness: 0.4,
+                metalness: 0.2
+            });
+
+            currentMesh = new THREE.Mesh(geometry, material);
+
+            currentMesh.rotation.x = -Math.PI / 2;
+
+            scene.add(currentMesh);
+        },
+        undefined,
+        function(error) {
+            addLog(
+                `<span class="event">[ERROR]</span> Failed to load STL: ${error.message || error}`
+            );
+            console.error('STL load failed:', error);
         }
-
-        geometry.center();
-
-        const material = new THREE.MeshStandardMaterial({
-            color: 0xff9f1c,
-            roughness: 0.4,
-            metalness: 0.2
-        });
-
-        currentMesh = new THREE.Mesh(geometry, material);
-
-        currentMesh.rotation.x = -Math.PI / 2;
-
-        scene.add(currentMesh);
-    });
+    );
 }
 
 function addLog(message) {
@@ -414,7 +423,8 @@ function addLog(message) {
 
 function connectWebSocket() {
 
-    ws = new WebSocket("ws://localhost:8000/ws/telemetry");
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${protocol}://${window.location.host}/ws/telemetry`);
 
     ws.onopen = function() {
 
@@ -432,12 +442,16 @@ function connectWebSocket() {
 
     ws.onmessage = function(event) {
 
-        const data = JSON.parse(event.data);
+        const packet = JSON.parse(event.data);
+        const data = packet.data || packet;
+        const status = packet.event || data.status || "EVENT";
 
         addLog(
-            `<span class="event">[${data.status || "EVENT"}]</span>
+            `<span class="event">[${status}]</span>
             Score:
-            <span class="score">${data.score || "0.00"}</span>`
+            <span class="score">${data.score || "0.00"}</span>
+            ${data.machine_name ? `&nbsp;|&nbsp;Machine: ${data.machine_name}` : ""}
+            ${data.revision_id ? `&nbsp;|&nbsp;Revision: ${data.revision_id}` : ""}`
         );
 
         if (data.score) {
@@ -497,6 +511,9 @@ window.onload = function() {
     drawChart();
 
     connectWebSocket();
+
+    // Load a default placeholder model so the 3D view is visible immediately.
+    loadSTL("default", "v0");
 };
 
 window.onresize = function() {

@@ -85,8 +85,39 @@ def download_model_stl(machine_name: str, revision_id: str):
             try:
                 subprocess.run(["openscad", "-o", stl_file_path, scad_fallback_path], capture_output=True, timeout=10.0)
             except Exception:
-                with open(stl_file_path, 'w') as f:
-                    f.write("MOCK BASELINE V0 SOLID LAYER GEOMETRY BLOCK SURFACE VECTOR")
+                with open(stl_file_path, 'w', encoding='utf-8') as f:
+                    f.write(
+                        "solid tetra\n"
+                        "  facet normal 0 0 0\n"
+                        "    outer loop\n"
+                        "      vertex 0 0 0\n"
+                        "      vertex 1 0 0\n"
+                        "      vertex 0 1 0\n"
+                        "    endloop\n"
+                        "  endfacet\n"
+                        "  facet normal 0 0 0\n"
+                        "    outer loop\n"
+                        "      vertex 0 0 0\n"
+                        "      vertex 0 1 0\n"
+                        "      vertex 0 0 1\n"
+                        "    endloop\n"
+                        "  endfacet\n"
+                        "  facet normal 0 0 0\n"
+                        "    outer loop\n"
+                        "      vertex 0 0 0\n"
+                        "      vertex 0 0 1\n"
+                        "      vertex 1 0 0\n"
+                        "    endloop\n"
+                        "  endfacet\n"
+                        "  facet normal 0 0 0\n"
+                        "    outer loop\n"
+                        "      vertex 1 0 0\n"
+                        "      vertex 0 0 1\n"
+                        "      vertex 0 1 0\n"
+                        "    endloop\n"
+                        "  endfacet\n"
+                        "endsolid tetra"
+                    )
     if not os.path.exists(stl_file_path):
         logger.error(
             f"STL download failed: expected file does not exist at {stl_file_path}"
