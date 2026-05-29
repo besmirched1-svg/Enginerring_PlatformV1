@@ -39,7 +39,7 @@ def get_current_champion(machine_name: str) -> Dict[str, Any]:
     except (json.JSONDecodeError, IOError):
         return {"machine_name": machine_name, "revision": "v0", "score": 0.0}
 
-def set_new_champion(machine_name: str, revision_dir: str, score: float) -> bool:
+def set_new_champion(machine_name: str, revision_id: str, score: float) -> bool:
     os.makedirs(os.path.dirname(CHAMPION_POINTER_FILE), exist_ok=True)
     
     if not os.path.exists(CHAMPION_POINTER_FILE):
@@ -62,7 +62,7 @@ def set_new_champion(machine_name: str, revision_dir: str, score: float) -> bool
             
             registry[machine_name] = {
                 "machine_name": machine_name,
-                "revision": revision_dir,
+                "revision": revision_id,
                 "score": round(score, 4)
             }
             
@@ -76,7 +76,7 @@ def set_new_champion(machine_name: str, revision_dir: str, score: float) -> bool
                 except (IOError, AttributeError):
                     pass
             
-            logger.info(f"Atomically promoted {machine_name} champion pointer to {revision_dir} with score {score}.")
+            logger.info(f"Atomically promoted {machine_name} champion pointer to {revision_id} with score {score}.")
             return True
     except Exception as e:
         logger.error(f"Critical failure updating champion registry file pointer: {str(e)}")

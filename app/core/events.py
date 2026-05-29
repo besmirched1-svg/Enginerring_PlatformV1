@@ -34,7 +34,17 @@ EVENTS_CHANNEL = "engineering.events"
 
 def _redis_url() -> Optional[str]:
     url = os.getenv("REDIS_URL")
-    return url.strip() if url else None
+    if url:
+        return url.strip()
+
+    host = os.getenv("REDIS_HOST")
+    if not host:
+        return None
+    port = os.getenv("REDIS_PORT", "6379")
+    password = os.getenv("REDIS_PASSWORD")
+    if password:
+        return f"redis://:{password}@{host}:{port}"
+    return f"redis://{host}:{port}"
 
 
 # ---------------------------------------------------------------------------
