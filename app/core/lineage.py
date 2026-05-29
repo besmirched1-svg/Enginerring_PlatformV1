@@ -5,7 +5,7 @@ from datetime import datetime
 
 logger = logging.getLogger("engine.lineage")
 
-LINEAGE_LOG_FILE = "output/revisions/lineage_history.json"
+LINEAGE_LOG_FILE = "outputs/revisions/lineage_history.json"
 
 def log_design_evolution(machine_name: str, parent_rev: str, challenger_rev: str, parent_score: float, challenger_score: float, reason: str) -> None:
     """

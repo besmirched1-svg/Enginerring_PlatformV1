@@ -5,7 +5,7 @@ from typing import Any, Dict, Tuple
 
 logger = logging.getLogger("engine.promotion")
 
-CHAMPION_POINTER_FILE = "output/revisions/champion_pointer.json"
+CHAMPION_POINTER_FILE = "outputs/revisions/champion_pointer.json"
 
 # Cross-platform file locking safety helper
 try:

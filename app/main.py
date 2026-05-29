@@ -1,7 +1,9 @@
 import logging
 import asyncio
+from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from typing import List
 from app.api.routes import router, register_orchestrator_reference
 from app.core.orchestrator import EngineeringOrchestrator
@@ -57,6 +59,16 @@ broadcaster = WebSocketEventBroadcaster()
 orchestrator_instance = EngineeringOrchestrator(broadcaster)
 register_orchestrator_reference(orchestrator_instance)
 app.include_router(router)
+
+@app.get("/dashboard")
+def serve_dashboard():
+    dashboard_path = Path(__file__).resolve().parent.parent / "dashboard.html"
+    return FileResponse(dashboard_path)
+
+@app.get("/")
+def serve_dashboard_root():
+    dashboard_path = Path(__file__).resolve().parent.parent / "dashboard.html"
+    return FileResponse(dashboard_path)
 
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger("engine.revisions")
 
-REVISIONS_BASE_DIR = "output/revisions"
+REVISIONS_BASE_DIR = "outputs/revisions"
 
 def archive_revision(machine_name: str, revision_id: str, config: Dict[str, Any], parent_info: Optional[Dict[str, Any]] = None) -> str:
     """

@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("engine.maintenance")
 
 API_STATUS_URL = "http://localhost:8000/improve/status/hemp_roller"
-ARCHIVE_ROOT = "output/revisions/hemp_roller"
+ARCHIVE_ROOT = "outputs/revisions/hemp_roller"
 
 def clean_obsolete_assets():
     logger.info("Initializing disk storage optimization sweep...")

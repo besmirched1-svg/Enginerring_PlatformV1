@@ -11,8 +11,8 @@ from app.core.promotion import get_current_champion
 logger = logging.getLogger("engine.api.routes")
 router = APIRouter()
 
-LINEAGE_LOG_FILE = "output/revisions/lineage_history.json"
-ARCHIVE_ROOT = "output/revisions"
+LINEAGE_LOG_FILE = "outputs/revisions/lineage_history.json"
+ARCHIVE_ROOT = "outputs/revisions"
 
 _orchestrator_instance = None
 
@@ -88,5 +88,11 @@ def download_model_stl(machine_name: str, revision_id: str):
                 with open(stl_file_path, 'w') as f:
                     f.write("MOCK BASELINE V0 SOLID LAYER GEOMETRY BLOCK SURFACE VECTOR")
     if not os.path.exists(stl_file_path):
-        raise HTTPException(status_code=404, detail=f"Requested physical 3D asset vector file not found for revision context: {revision_id}")
+        logger.error(
+            f"STL download failed: expected file does not exist at {stl_file_path}"
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Requested 3D asset file not found for revision: {revision_id}. See server logs for path diagnostics."
+        )
     return FileResponse(path=stl_file_path, media_type="application/sla", filename=f"{machine_name}_{revision_id}.stl")
