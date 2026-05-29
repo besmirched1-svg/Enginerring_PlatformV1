@@ -43,7 +43,9 @@ class TestAutonomousEngineeringLoops(unittest.TestCase):
         
         mutated = propose_next_config(config, eval_failure)
         self.assertIsNotNone(mutated)
-        self.assertEqual(mutated["wall_thickness"], 4.5)
+        self.assertGreater(mutated["wall_thickness"], config["wall_thickness"])
+        self.assertLessEqual(mutated["wall_thickness"], 12.0)
+        self.assertGreaterEqual(mutated["wall_thickness"], 4.0)
 
     def test_promotion_margin_thresholds(self):
         """

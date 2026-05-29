@@ -1,19 +1,15 @@
 ﻿#!/usr/bin/env python3
 # scripts/safe_tabs.py
-# Small utility to sanitize and summarize Edge tab metadata.
+# Safe sanitizer for Edge tab metadata. This script does NOT embed raw metadata.
+# If you have raw metadata, save it as dev_data/edge_tabs_raw.json and this script will load and sanitize it.
 
 import json
 import re
 from typing import Dict, List, Optional
+import os
 
-edge_all_open_tabs = [
-    {"pageTitle":"<WebsiteContent_yjWhvihRxYZDd8ch7JWFT></WebsiteContent_yjWhvihRxYZDd8ch7JWFT>",
-     "pageUrl":"<WebsiteContent_yjWhvihRxYZDd8ch7JWFT></WebsiteContent_yjWhvihRxYZDd8ch7JWFT>",
-     "tabId":-1,"isCurrent":True},
-    {"pageTitle":"<WebsiteContent_yjWhvihRxYZDd8ch7JWFT>credential manager - Search</WebsiteContent_yjWhvihRxYZDd8ch7JWFT>",
-     "pageUrl":"<WebsiteContent_yjWhvihRxYZDd8ch7JWFT>https://www.bing.com/search</WebsiteContent_yjWhvihRxYZDd8ch7JWFT>",
-     "tabId":-1,"isCurrent":False}
-]
+_RAW_PATH = os.path.join("dev_data", "edge_tabs_raw.json")
+_SANITIZED_PATH = os.path.join("dev_data", "edge_tabs_sanitized.json")
 
 _WEBSITE_CONTENT_TAG_RE = re.compile(r"<WebsiteContent_[^>]+>(.*?)</WebsiteContent_[^>]+>", re.DOTALL)
 
@@ -43,24 +39,25 @@ def summarize_tabs(tabs: List[Dict]) -> List[Dict]:
     return summary
 
 def save_sanitized_json(path: str, data: List[Dict]):
-    import os
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)
 
+def load_raw_if_exists(path: str) -> Optional[List[Dict]]:
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+def main():
+    raw = load_raw_if_exists(_RAW_PATH)
+    if raw is None:
+        print("No raw metadata found at dev_data/edge_tabs_raw.json. Exiting.")
+        return
+    sanitized = summarize_tabs(raw)
+    save_sanitized_json(_SANITIZED_PATH, sanitized)
+    print(f"Sanitized JSON saved to {_SANITIZED_PATH}")
+
 if __name__ == "__main__":
-    current = get_current_tab(edge_all_open_tabs)
-    sanitized = summarize_tabs(edge_all_open_tabs)
-    print("Current tab (sanitized):")
-    if current:
-        print(json.dumps({
-            "tabId": current.get("tabId"),
-            "title": _strip_websitecontent_tags(current.get("pageTitle", "") or ""),
-            "url": _strip_websitecontent_tags(current.get("pageUrl", "") or "")
-        }, indent=2, ensure_ascii=False))
-    else:
-        print("  None found")
-    print("\nAll open tabs (sanitized):")
-    print(json.dumps(sanitized, indent=2, ensure_ascii=False))
-    save_sanitized_json("dev_data/edge_tabs_sanitized.json", sanitized)
-    print("\nSanitized JSON saved to dev_data/edge_tabs_sanitized.json")
+    main()
+

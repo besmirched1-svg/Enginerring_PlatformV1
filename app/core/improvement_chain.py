@@ -40,6 +40,13 @@ class ImprovementChainManager:
         raw_data = self.redis.hgetall(key)
         return {k.decode('utf-8'): v.decode('utf-8') for k, v in raw_data.items()}
 
+    def get_attempts_count(self, chain_id: str) -> int:
+        chain_data = self.get_chain(chain_id)
+        try:
+            return int(chain_data.get("attempts", "0"))
+        except (TypeError, ValueError):
+            return 0
+
     def attempt_and_increment(self, chain_id: str) -> bool:
         """
         Atomically inspects the budget ceiling and registers an additional increment

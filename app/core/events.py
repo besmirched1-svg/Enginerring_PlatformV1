@@ -57,6 +57,12 @@ class EventBus:
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         raise NotImplementedError
 
+    def broadcast(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        return self.publish(event_type, payload)
+
+    def emit(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
+        return self.publish(event_type, payload)
+
     async def subscribe(self) -> AsyncIterator[dict[str, Any]]:  # pragma: no cover
         raise NotImplementedError
         yield  # pragma: no cover

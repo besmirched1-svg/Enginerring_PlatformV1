@@ -1,7 +1,7 @@
 
-        wall_thickness = 5.0;
-        bore_clearance = 0.431;
-        roller_radius = 31.43;
+        wall_thickness = 1.69;
+        bore_clearance = 0.778;
+        roller_radius = 14.83;
         
         module roller() {
             difference() {

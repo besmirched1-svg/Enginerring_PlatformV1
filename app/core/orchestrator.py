@@ -1,9 +1,9 @@
 import os
-import json
 import uuid
 import logging
 import subprocess
 from typing import Any, Dict, Optional
+from app.core.evaluation import evaluate_build
 from app.core.revisions import archive_revision, update_promotion_status
 from app.core.promotion import get_current_champion, should_promote, set_new_champion
 from app.core.lineage import log_design_evolution
@@ -31,6 +31,16 @@ class EngineeringOrchestrator:
         composite_score = round((stability * 0.4) + (material_efficiency * 0.4) + (performance * 0.2), 2)
         return {"score": composite_score, "metrics": {"structural_stability": stability, "material_efficiency": material_efficiency, "performance_heuristics": performance}, "issues": []}
 
+    def _emit_event(self, event_type: str, payload: Dict[str, Any] | None = None) -> None:
+        if self.event_bus is None:
+            return
+        if hasattr(self.event_bus, "publish"):
+            self.event_bus.publish(event_type, payload or {})
+        elif hasattr(self.event_bus, "broadcast"):
+            self.event_bus.broadcast(event_type, payload or {})
+        elif hasattr(self.event_bus, "emit"):
+            self.event_bus.emit(event_type, payload or {})
+
     def run_machine_job(
         self, 
         machine_name: str, 
@@ -47,43 +57,74 @@ class EngineeringOrchestrator:
         
         parent_info = {"chain_id": chain_id, "attempt_in_chain": attempt_in_chain, "parent_revision": old_rev} if chain_id else None
         
-        self.event_bus.broadcast("build_started", {"machine_name": machine_name, "revision_id": revision_id})
+        self._emit_event("build_started", {"machine_name": machine_name, "revision_id": revision_id, "chain_id": chain_id})
         
-        # Force clean, cross-platform relative paths compliant inside Docker file systems
         rev_dir = os.path.normpath(os.path.join("output", "revisions", machine_name, revision_id))
         os.makedirs(rev_dir, exist_ok=True)
         
         scad_path = os.path.join(rev_dir, "model.scad")
         stl_path = os.path.join(rev_dir, "output.stl")
         
-        with open(scad_path, 'w', encoding='utf-8') as sf: 
+        with open(scad_path, 'w', encoding='utf-8') as sf:
             sf.write(self._generate_scad_template(config))
-            
+        self._emit_event("scad_generated", {"machine_name": machine_name, "revision_id": revision_id, "scad_path": scad_path})
+
         try:
-            subprocess.run(["openscad", "-o", stl_path, scad_path], capture_output=True, timeout=10.0)
-            self.event_bus.broadcast("stl_generated", {"machine_name": machine_name, "revision_id": revision_id})
+            subprocess.run(["openscad", "-o", stl_path, scad_path], capture_output=True, timeout=10.0, check=True)
+            self._emit_event("stl_generated", {"machine_name": machine_name, "revision_id": revision_id, "stl_path": stl_path})
         except Exception as e:
             logger.error(f"OpenSCAD execution failure, substituting fallback STL mesh: {str(e)}")
-            with open(stl_path, 'w') as f: f.write("FALLBACK STL")
-            
-        evaluation_result = self._calculate_live_metrics(config, attempt_in_chain)
-        
-        # Override composite evaluation score based on the simulation script target values
-        if "score" in config:
-            evaluation_result["score"] = config["score"]
-            
-        is_promoted, reason = should_promote(evaluation_result["score"], old_score)
+            self._emit_event("build_failed", {"machine_name": machine_name, "revision_id": revision_id, "error": str(e)})
+            with open(stl_path, 'w', encoding='utf-8') as f:
+                f.write("FALLBACK STL")
+
+        evaluation_result = evaluate_build(config, None)
+        archive_revision(machine_name, revision_id, config, parent_info)
+        self._emit_event("evaluation_complete", {
+            "machine_name": machine_name,
+            "revision_id": revision_id,
+            "evaluation": evaluation_result,
+            "config": config,
+            "parent_info": parent_info,
+        })
+
+        if evaluation_result.get("needs_improvement", False):
+            self._emit_event("improvement_suggested", {
+                "machine_name": machine_name,
+                "root_revision": old_rev,
+                "chain_id": chain_id or f"chain_{uuid.uuid4().hex[:8]}",
+                "config": config,
+                "evaluation_result": evaluation_result,
+            })
+
+        score = evaluation_result.get("composite", 0.0)
+        is_promoted, reason = should_promote(score, old_score)
         promotion_triggered = False
-        
+
         if is_promoted:
-            if set_new_champion(machine_name, rev_dir, evaluation_result["score"]):
+            if set_new_champion(machine_name, revision_id, score):
                 try:
                     update_promotion_status(machine_name, revision_id, "champion")
                 except Exception:
                     pass
-                log_design_evolution(machine_name, old_rev, revision_id, old_score, evaluation_result["score"], reason)
-                dispatch_cluster_alert(title=f"🏆 CHAMPION PROMOTED: {machine_name}", text=f"Revision [{revision_id}] outscored baseline ({old_score:.2f} -> {evaluation_result['score']:.2f}).", alert_level="SUCCESS")
+                log_design_evolution(machine_name, old_rev, revision_id, old_score, score, reason)
+                dispatch_cluster_alert(
+                    title=f"🏆 CHAMPION PROMOTED: {machine_name}",
+                    text=f"Revision [{revision_id}] outscored baseline ({old_score:.2f} -> {score:.2f}).",
+                    alert_level="SUCCESS"
+                )
+                self._emit_event("revision_promoted", {
+                    "machine_name": machine_name,
+                    "revision_id": revision_id,
+                    "score": score,
+                })
                 promotion_triggered = True
-                
-        self.event_bus.broadcast("improvement_suggested", {"machine_name": machine_name, "root_revision": old_rev, "chain_id": chain_id or f"chain_{uuid.uuid4().hex[:8]}", "config": config, "evaluation_result": evaluation_result})
-        return {"revision_id": revision_id, "directory": rev_dir, "score": evaluation_result["score"], "promoted": promotion_triggered}
+
+        return {
+            "revision_id": revision_id,
+            "directory": rev_dir,
+            "score": score,
+            "evaluation": evaluation_result,
+            "promoted": promotion_triggered,
+            "parent_info": parent_info,
+        }

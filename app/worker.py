@@ -2,7 +2,9 @@ import os
 import logging
 import redis
 from typing import Any
+from app.core.events import get_event_bus
 from app.core.improvement_controller import ImprovementLoopController
+from app.core.orchestrator import EngineeringOrchestrator
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("engine.worker")
@@ -11,10 +13,6 @@ logger = logging.getLogger("engine.worker")
 class MockQueue:
     def enqueue(self, func: Any, *args: Any) -> None:
         logger.info(f"Async task sent to background queue pipeline: {func.__name__} with parameters {args}")
-
-class MockOrchestrator:
-    def run_machine_job(self, machine_name: str, config: Any, chain_id: Any, attempt: Any) -> None:
-        pass
 
 class MockEventBus:
     def broadcast(self, event_name: str, payload: Any) -> None:
@@ -40,8 +38,8 @@ def start_worker() -> None:
         return
 
     # Instantiate system runtime dependencies
-    event_bus = MockEventBus()
-    orchestrator = MockOrchestrator()
+    event_bus = get_event_bus()
+    orchestrator = EngineeringOrchestrator(event_bus)
     queue_client = MockQueue()
 
     # Evaluate external system environment parameters to verify runtime execution safety
