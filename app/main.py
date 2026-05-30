@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import traceback
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +16,7 @@ from app.core.events import EventBus, NullEventBus
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+UPLOAD_DIR = os.path.join(BASE_DIR, "workspace", "uploads")
 DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 
 # Base FastAPI app
@@ -36,6 +37,8 @@ app.add_middleware(
 # Static mounts
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
 
 app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 app.mount("/static", StaticFiles(directory=BASE_DIR), name="static")
@@ -43,6 +46,31 @@ app.mount("/static", StaticFiles(directory=BASE_DIR), name="static")
 @app.get("/")
 async def serve_dashboard():
     return FileResponse(DASHBOARD_FILE)
+
+@app.post("/upload")
+async def upload_files(files: list[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    saved = []
+    for upload in files:
+        filename = os.path.basename(upload.filename)
+        if not filename:
+            continue
+        destination_path = os.path.join(UPLOAD_DIR, filename)
+        contents = await upload.read()
+        with open(destination_path, "wb") as destination_file:
+            destination_file.write(contents)
+        saved.append({
+            "filename": filename,
+            "saved_to": os.path.abspath(destination_path)
+        })
+
+    return {
+        "status": "ok",
+        "files": saved,
+        "upload_dir": os.path.abspath(UPLOAD_DIR)
+    }
 
 # --- Legacy WebSocket Telemetry Bridge (kept for compatibility) ---
 class ConnectionManager:

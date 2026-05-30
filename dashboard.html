@@ -39,6 +39,14 @@
     </div>
 
     <div class="card">
+      <h2>Upload Workspace File</h2>
+      <input id="upload-input" type="file" multiple style="width:100%; margin-top:8px;" />
+      <div class="spacer"></div>
+      <button id="btn-upload">Upload to Workspace</button>
+      <div id="upload-status" class="small" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card">
       <h3>Quick Info</h3>
       <div class="small">Socket.IO namespaces: <code>/optimizer</code> <code>/swarm</code> <code>/cad</code> <code>/planner</code></div>
       <div class="spacer"></div>
@@ -108,6 +116,39 @@
             appendLog('ui', 'test_error', String(err));
             console.error(err);
           });
+      });
+
+      document.getElementById('btn-upload').addEventListener('click', async () => {
+        const input = document.getElementById('upload-input');
+        const status = document.getElementById('upload-status');
+        const files = input.files;
+        if (!files || files.length === 0) {
+          appendLog('ui', 'upload_error', 'No files selected');
+          status.textContent = 'Please select one or more files to upload.';
+          return;
+        }
+
+        const form = new FormData();
+        for (const file of files) {
+          form.append('files', file);
+        }
+
+        status.textContent = 'Uploading...';
+        try {
+          const response = await fetch(origin + '/upload', {
+            method: 'POST',
+            body: form
+          });
+          const payload = await response.json();
+          if (!response.ok) {
+            throw new Error(payload.detail || response.statusText);
+          }
+          appendLog('ui', 'upload_success', payload);
+          status.textContent = `Uploaded ${payload.files.length} file(s) to workspace.`;
+        } catch (err) {
+          appendLog('ui', 'upload_error', String(err));
+          status.textContent = 'Upload failed; see console for details.';
+        }
       });
 
       // Expose for debugging
