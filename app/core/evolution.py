@@ -1,4 +1,10 @@
 import random
+
+from app.core.validation import (
+    constrain_config,
+    validate_machine_config
+)
+
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.core.scoring import DesignScoringEngine

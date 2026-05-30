@@ -8,6 +8,7 @@ from app.core.events import get_event_bus
 from app.core.planner import AIReasoningPlanner
 from app.core.scoring import DesignScoringEngine, EvaluationFeedback
 from app.core.evolution import ReinforcementOptimizer
+from app.cad.openscad_service import OpenSCADService
 
 logger = logging.getLogger("app.core.swarm")
 
@@ -98,7 +99,41 @@ class MultiAgentSwarm:
         self.validation_agent = ValidationAgent()
         self.optimization_agent = OptimizationAgent(seed=abs(hash(session_id)) % (2**32))
         self.random = random.Random(abs(hash(session_id)) % (2**32))
-        os.makedirs(self.output_dir, exist_ok=True)
+        self.artifact_root = os.path.join(self.output_dir, "swarm_revisions")
+        os.makedirs(self.artifact_root, exist_ok=True)
+
+    def _event_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return payload.copy()
+
+    def _candidate_artifact_dir(self, candidate: Candidate) -> str:
+        return os.path.join(self.artifact_root, candidate["id"])
+
+    def _export_candidate_stl(self, candidate: Candidate) -> Candidate:
+        artifact_dir = self._candidate_artifact_dir(candidate)
+        os.makedirs(artifact_dir, exist_ok=True)
+        candidate["artifact_dir"] = artifact_dir
+        scad_path = os.path.join(artifact_dir, "model.scad")
+        stl_path = os.path.join(artifact_dir, "output.stl")
+
+        with open(scad_path, "w", encoding="utf-8") as scad_file:
+            scad_file.write(candidate.get("scad", ""))
+
+        try:
+            OpenSCADService.render_scad_to_stl(candidate["scad"], stl_path)
+            candidate["stl_path"] = stl_path
+            relative_path = os.path.relpath(stl_path, self.output_dir)
+            candidate["stl_url"] = "/output/" + relative_path.replace(os.path.sep, "/")
+            self._broadcast("stl_generated", {
+                "id": candidate["id"],
+                "generation": candidate.get("generation", 0),
+                "stl_path": stl_path,
+                "stl_url": candidate["stl_url"],
+            })
+        except Exception as exc:
+            logger.warning("Failed to export STL for %s: %s", candidate.get("id"), exc)
+            candidate["stl_path"] = None
+            candidate["stl_url"] = None
+        return candidate
 
     def _broadcast(self, event_type: str, payload: Dict[str, Any]) -> None:
         try:
@@ -123,6 +158,13 @@ class MultiAgentSwarm:
             population.append(self.design_agent.generate(1, params))
         return population
 
+    def _serialize_feedback(self, feedback: Any) -> Dict[str, Any]:
+        if hasattr(feedback, "dict"):
+            return feedback.dict()
+        if isinstance(feedback, dict):
+            return feedback
+        return {"raw": str(feedback)}
+
     def _render_and_validate(self, generation: int, candidate: Candidate) -> Candidate:
         self._broadcast("scad_generated", {
             "id": candidate["id"],
@@ -131,6 +173,7 @@ class MultiAgentSwarm:
         })
         candidate["generation"] = generation
         validated = self.validation_agent.evaluate(candidate)
+        feedback = self._serialize_feedback(validated.get("feedback"))
         self._broadcast("evaluation_complete", {
             "id": validated["id"],
             "generation": generation,
@@ -138,15 +181,33 @@ class MultiAgentSwarm:
             "valid": validated["valid"],
             "signals": validated["signals"],
             "params": validated["params"],
+            "feedback": feedback,
+            "composite_score": feedback.get("composite_score", validated["score"]),
+            "structural_stability": feedback.get("structural_stability"),
+            "material_efficiency": feedback.get("material_efficiency"),
+            "manufacturing_simplicity": feedback.get("manufacturing_simplicity"),
+            "structural_validity": feedback.get("structural_stability"),
+            "manufacturability": feedback.get("manufacturing_simplicity"),
+            "evaluation": {"feedback": feedback, "score": validated["score"]},
         })
         return validated
 
     def _promote(self, generation: int, candidate: Candidate) -> None:
+        candidate = self._export_candidate_stl(candidate)
+        stl_url = candidate.get("stl_url")
+        if not stl_url and candidate.get("stl_path"):
+            normalized = candidate["stl_path"].replace(os.path.sep, "/")
+            marker = "/output/"
+            index = normalized.find(marker)
+            if index != -1:
+                stl_url = normalized[index:]
         self._broadcast("revision_promoted", {
             "generation": generation,
             "id": candidate["id"],
             "score": candidate["score"],
             "params": candidate["params"],
+            "stl_path": candidate.get("stl_path"),
+            "stl_url": stl_url,
         })
 
     def run(self, prompt: str, max_generations: Optional[int] = None, population_size: int = 5) -> Dict[str, Any]:

@@ -41,6 +41,20 @@ class EngineeringOrchestrator:
         elif hasattr(self.event_bus, "emit"):
             self.event_bus.emit(event_type, payload or {})
 
+    def _make_stl_url(self, machine_name: str, revision_id: str) -> str:
+        return f"/output/revisions/{machine_name}/{revision_id}/output.stl"
+
+    def _extract_evaluation_metrics(self, evaluation_result: Dict[str, Any]) -> Dict[str, Any]:
+        metrics = evaluation_result.get("metrics", {})
+        return {
+            "score": evaluation_result.get("composite", 0.0),
+            "composite_score": evaluation_result.get("composite", 0.0),
+            "structural_stability": metrics.get("structural_validity", {}).get("score") if isinstance(metrics.get("structural_validity"), dict) else metrics.get("structural_validity"),
+            "material_efficiency": metrics.get("material_efficiency", {}).get("score") if isinstance(metrics.get("material_efficiency"), dict) else metrics.get("material_efficiency"),
+            "manufacturing_simplicity": metrics.get("manufacturability", {}).get("score") if isinstance(metrics.get("manufacturability"), dict) else metrics.get("manufacturability"),
+            "evaluation": evaluation_result,
+        }
+
     def run_machine_job(
         self, 
         machine_name: str, 
@@ -71,7 +85,12 @@ class EngineeringOrchestrator:
 
         try:
             subprocess.run(["openscad", "-o", stl_path, scad_path], capture_output=True, timeout=10.0, check=True)
-            self._emit_event("stl_generated", {"machine_name": machine_name, "revision_id": revision_id, "stl_path": stl_path})
+            self._emit_event("stl_generated", {
+                "machine_name": machine_name,
+                "revision_id": revision_id,
+                "stl_path": stl_path,
+                "stl_url": self._make_stl_url(machine_name, revision_id),
+            })
         except Exception as e:
             logger.error(f"OpenSCAD execution failure, substituting fallback STL mesh: {str(e)}")
             self._emit_event("build_failed", {"machine_name": machine_name, "revision_id": revision_id, "error": str(e)})
@@ -80,13 +99,15 @@ class EngineeringOrchestrator:
 
         evaluation_result = evaluate_build(config, None)
         archive_revision(machine_name, revision_id, config, parent_info)
-        self._emit_event("evaluation_complete", {
+        evaluation_payload = {
             "machine_name": machine_name,
             "revision_id": revision_id,
             "evaluation": evaluation_result,
             "config": config,
             "parent_info": parent_info,
-        })
+        }
+        evaluation_payload.update(self._extract_evaluation_metrics(evaluation_result))
+        self._emit_event("evaluation_complete", evaluation_payload)
 
         if evaluation_result.get("needs_improvement", False):
             self._emit_event("improvement_suggested", {
@@ -117,6 +138,8 @@ class EngineeringOrchestrator:
                     "machine_name": machine_name,
                     "revision_id": revision_id,
                     "score": score,
+                    "stl_path": stl_path,
+                    "stl_url": self._make_stl_url(machine_name, revision_id),
                 })
                 promotion_triggered = True
 

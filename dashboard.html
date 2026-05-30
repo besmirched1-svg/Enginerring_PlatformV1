@@ -1,155 +1,119 @@
-﻿<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenSCAD Engineering Platform</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>OpenSCAD Engineering Platform - Dashboard</title>
+  <style>
+    body { background:#0f1113; color:#e6eef6; font-family:system-ui,Segoe UI,Roboto,Arial; margin:0; padding:18px; }
+    .top { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
+    .status-badge { padding:6px 10px; border-radius:6px; font-weight:600; }
+    .status-indicator { margin-left:12px; }
+    .status-off { background:#3a3f44; color:#fff; }
+    .status-online { background:#2ecc71; color:#07210a; }
+    .container { display:grid; grid-template-columns: 1fr 360px; gap:12px; align-items:start; }
+    .card { background:#0b0c0d; border:1px solid #222; padding:12px; border-radius:8px; }
+    #event-log { height:420px; overflow:auto; background:#070708; padding:10px; border-radius:6px; font-family:monospace; font-size:13px; color:#dfe7ee; }
+    button { background:#1abc9c; color:#04221a; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
+    .small { font-size:13px; color:#9aa6b2; }
+    .title { margin:0; font-size:18px; }
+    .card h2 { margin-top:0; font-size:15px; }
+    .card h3 { margin-top:0; font-size:14px; }
+    .button-container { margin-left:auto; }
+    .spacer { height:12px; }
+  </style>
 </head>
 <body>
+  <div class="top">
+    <h1 class="title">OpenSCAD Engineering Platform</h1>
+    <div id="status-indicator" class="status-badge status-off status-indicator">OFFLINE</div>
+    <div class="button-container">
+      <button id="btn-test">Inject telemetry test</button>
+    </div>
+  </div>
 
-    <h1>⚙️ OpenSCAD Engineering Platform</h1>
-    <div class="status-container">
-        Connection Status: <span id="status-indicator" class="status-badge status-offline">OFFLINE</span>
+  <div class="container">
+    <div class="card">
+      <h2>Live Event Stream</h2>
+      <div id="event-log"></div>
     </div>
 
-    <div class="dashboard-container">
-        <div class="card">
-            <h2>📋 Parametric Controls</h2>
-            
-            <div class="control-group">
-                <label for="input-wall">Wall Thickness: <span id="val-wall">4.5</span></label>
-                <input id="input-wall" type="range" min="1" max="10" step="0.5" value="4.5">
-            </div>
-            
-            <div class="control-group">
-                <label for="input-bore">Bore Clearance: <span id="val-bore">0.6</span></label>
-                <input id="input-bore" type="range" min="0.1" max="3" step="0.1" value="0.6">
-            </div>
-            
-            <div class="control-group">
-                <label for="input-radius">Roller Radius: <span id="val-radius">32</span></label>
-                <input id="input-radius" type="range" min="10" max="60" step="1" value="32">
-            </div>
-            
-            <button class="btn-primary" onclick="triggerOptimization()">Inject Optimization Task</button>
-        </div>
-
-        <div class="card">
-            <h2>📈 Optimization Curve</h2>
-            <div id="plot-area" class="analytics-stream-view">
-                Waiting for optimization run data stream...
-            </div>
-        </div>
-
-        <div class="card">
-            <h2>🧊 Live 3D CAD Preview</h2>
-            <div id="cad-preview" class="preview-box cad-viewport-alignment">
-                [ 3D Viewport Ready ]
-            </div>
-        </div>
+    <div class="card">
+      <h3>Quick Info</h3>
+      <div class="small">Socket.IO namespaces: <code>/optimizer</code> <code>/swarm</code> <code>/cad</code> <code>/planner</code></div>
+      <div class="spacer"></div>
+      <div class="small">Open the console (F12) to see raw logs.</div>
     </div>
+  </div>
 
-    <div class="card log-panel-card">
-        <h2>📡 Live Event Stream</h2>
-        <div id="event-log" class="event-stream"></div>
-    </div>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    (function () {
+      const logEl = document.getElementById('event-log');
+      const status = document.getElementById('status-indicator');
 
-    <script>
-        const logElement = document.getElementById("event-log");
-        const statusIndicator = document.getElementById("status-indicator");
-        const plotArea = document.getElementById("plot-area");
+      function appendLog(channel, type, data) {
+        const ts = new Date().toLocaleTimeString();
+        const line = document.createElement('div');
+        line.innerHTML = '<span style="color:#9aa6b2">[' + ts + ']</span> <b style="color:#fff">' + channel + '</b> ' + '<span style="color:#7fd3b6">' + type + '</span> ' + '<span style="color:#cfe8ff"> ' + (typeof data === "object" ? JSON.stringify(data) : String(data)) + '</span>';
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
 
-        // UI Slider Value Mirroring
-        const sliders = ["wall", "bore", "radius"];
-        sliders.forEach(id => {
-            const input = document.getElementById(`input-${id}`);
-            const display = document.getElementById(`val-${id}`);
-            if(input && display) {
-                input.addEventListener("input", (e) => {
-                    display.textContent = e.target.value;
-                });
-            }
+      // Use current origin so it works on localhost:9000 or other host/port
+      const origin = window.location.origin;
+
+      // Create socket.io connections
+      const optimizer = io(origin + '/optimizer');
+      const swarm = io(origin + '/swarm');
+      const cad = io(origin + '/cad');
+      const planner = io(origin + '/planner');
+
+      // Generic attach helper
+      function attach(socket, name, handlers) {
+        socket.on('connect', () => {
+          appendLog(name, 'connect', {});
+          status.className = 'status-badge status-online';
+          status.textContent = 'ONLINE';
+          console.log('[dashboard] connected');
         });
-
-        function logEvent(type, message, color = "#e0e0e0") {
-            const timestamp = new Date().toLocaleTimeString();
-            logElement.innerHTML += `<div style="color: ${color}">[${timestamp}] <b>${type}</b>: ${message}</div>`;
-            logElement.scrollTop = logElement.scrollHeight;
+        socket.on('disconnect', () => {
+          appendLog(name, 'disconnect', {});
+          status.className = 'status-badge status-off';
+          status.textContent = 'OFFLINE';
+          console.log('[dashboard] disconnected');
+        });
+        for (const ev of handlers) {
+          socket.on(ev, (d) => {
+            appendLog(name, ev, d);
+            console.log(name, ev, d);
+          });
         }
+      }
 
-        const socket = new WebSocket("ws://127.0.0.1:8000/ws/telemetry");
+      attach(optimizer, 'optimizer', ['mutation', 'score_update']);
+      attach(swarm, 'swarm', ['agent_message']);
+      attach(cad, 'cad', ['stl_ready']);
+      attach(planner, 'planner', ['reasoning_step']);
 
-        socket.onopen = () => {
-            statusIndicator.className = "status-badge status-online";
-            statusIndicator.textContent = "ONLINE";
-            logEvent("SYSTEM", "Connected cleanly to backend multi-agent swarm.", "#2ecc71");
-        };
+      // Test button triggers backend test endpoint
+      document.getElementById('btn-test').addEventListener('click', () => {
+        fetch(origin + '/telemetry/test')
+          .then(r => r.json())
+          .then(j => {
+            appendLog('ui', 'test_sent', j);
+            console.log('telemetry test response', j);
+          })
+          .catch(err => {
+            appendLog('ui', 'test_error', String(err));
+            console.error(err);
+          });
+      });
 
-        socket.onclose = () => {
-            statusIndicator.className = "status-badge status-offline";
-            statusIndicator.textContent = "OFFLINE";
-            logEvent("ERROR", "Disconnected from backend agent matrix.", "#ff4d4d");
-        };
-
-        socket.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            const eventType = String(msg.event).toLowerCase();
-            const payload = msg.payload || {};
-            
-            // Core Event Routing Map
-            if (eventType === "job_queued") {
-                logEvent("SYSTEM", `Task successfully queued: ${payload.prompt}`, "#e67e22");
-            } 
-            else if (eventType === "build_started") {
-                logEvent("SWARM", `Starting iterations. Strategy: ${payload.strategy || 'Adaptive Optimization'}`, "#9b59b6");
-            }
-            else if (eventType === "scad_generated") {
-                logEvent("DESIGN_AGENT", `Generation ${payload.generation} layout parsed cleanly.`, "#3498db");
-            } 
-            else if (eventType === "revision_promoted") {
-                logEvent("OPTIMIZATION_AGENT", `💥 New Optimization Champion Promoted! [Score: ${payload.score}%]`, "#2ecc71");
-                document.getElementById("cad-preview").innerHTML = `<div><b>Geometry Updated</b><br><span style="font-size:11px; color:#aaa;">File compiled: ${payload.stl_target}</span></div>`;
-            }
-
-            // SMART FALLBACK RECEIVER: Intercept ANY event type containing structural verification metrics
-            if (payload.composite_score !== undefined || eventType.includes("evaluation") || payload.structural_stability !== undefined) {
-                logEvent("VALIDATION_AGENT", `Evaluated Generation ${payload.generation || 1} | Score: ${payload.composite_score}%`, "#f1c40f");
-                
-                plotArea.innerHTML = `
-                    <div style="padding: 10px; background: rgba(241, 196, 15, 0.1); border-left: 4px solid #f1c40f; margin-top: 5px;">
-                        <h3 style="color:#f1c40f; margin-top:0;">📊 Swarm Fitness Output (Gen ${payload.generation || 1})</h3>
-                        <table style="width:100%; border-collapse:collapse; font-size:13px; color:#fff;">
-                            <tr><td style="padding:4px 0;"><b>Composite Score:</b></td><td style="text-align:right; color:#2ecc71;"><b>${payload.composite_score}%</b></td></tr>
-                            <tr><td style="padding:4px 0;"><b>Structural Stability:</b></td><td style="text-align:right;">${payload.structural_stability}%</td></tr>
-                            <tr><td style="padding:4px 0;"><b>Material Efficiency:</b></td><td style="text-align:right;">${payload.material_efficiency}%</td></tr>
-                            <tr><td style="padding:4px 0;"><b>Manufacturing Simplicity:</b></td><td style="text-align:right;">${payload.manufacturing_simplicity}%</td></tr>
-                        </table>
-                    </div>
-                `;
-            }
-        };
-
-        function triggerOptimization() {
-            logEvent("UI_EVENT", "Dispatched optimization task initialization signal...", "#f39c12");
-            
-            const wall = parseFloat(document.getElementById("input-wall").value);
-            const bore = parseFloat(document.getElementById("input-bore").value);
-            const radius = parseFloat(document.getElementById("input-radius").value);
-
-            const payload = {
-                action: "execute_optimization",
-                prompt: `Precision run: Wall ${wall}mm, Bore ${bore}mm, Radius ${radius}mm`,
-                session_id: "live-session"
-            };
-
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify(payload));
-                logEvent("WS_STREAM", "Payload vector injected successfully through open socket tunnel.", "#2ecc71");
-            } else {
-                logEvent("WS_ERROR", "Cannot route pipeline payload: WebSocket channel is closed.", "#ff4d4d");
-            }
-        }
-    </script>
+      // Expose for debugging
+      window.__dashboard = { optimizer, swarm, cad, planner };
+      console.log('[dashboard] Socket.IO telemetry client initialized');
+    })();
+  </script>
 </body>
 </html>
