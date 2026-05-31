@@ -4,24 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>OpenSCAD Engineering Platform - Dashboard</title>
-  <style>
-    body { background:#0f1113; color:#e6eef6; font-family:system-ui,Segoe UI,Roboto,Arial; margin:0; padding:18px; }
-    .top { display:flex; gap:12px; align-items:center; margin-bottom:12px; }
-    .status-badge { padding:6px 10px; border-radius:6px; font-weight:600; }
-    .status-indicator { margin-left:12px; }
-    .status-off { background:#3a3f44; color:#fff; }
-    .status-online { background:#2ecc71; color:#07210a; }
-    .container { display:grid; grid-template-columns: 1fr 360px; gap:12px; align-items:start; }
-    .card { background:#0b0c0d; border:1px solid #222; padding:12px; border-radius:8px; }
-    #event-log { height:420px; overflow:auto; background:#070708; padding:10px; border-radius:6px; font-family:monospace; font-size:13px; color:#dfe7ee; }
-    button { background:#1abc9c; color:#04221a; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
-    .small { font-size:13px; color:#9aa6b2; }
-    .title { margin:0; font-size:18px; }
-    .card h2 { margin-top:0; font-size:15px; }
-    .card h3 { margin-top:0; font-size:14px; }
-    .button-container { margin-left:auto; }
-    .spacer { height:12px; }
-  </style>
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="top">
@@ -39,11 +22,31 @@
     </div>
 
     <div class="card">
+      <h2>Latest Evaluation Metrics</h2>
+      <div id="metrics-status" class="small">Waiting for evaluation events...</div>
+      <pre id="metrics-json" class="metrics-json"></pre>
+    </div>
+
+    <div class="card">
       <h2>Upload Workspace File</h2>
-      <input id="upload-input" type="file" multiple style="width:100%; margin-top:8px;" />
+      <label class="form-label" for="upload-input">Choose workspace files</label>
+      <input
+        id="upload-input"
+        class="upload-input"
+        title="Choose workspace files to upload"
+        placeholder="Select files to upload"
+        type="file"
+        multiple
+      />
       <div class="spacer"></div>
       <button id="btn-upload">Upload to Workspace</button>
-      <div id="upload-status" class="small" style="margin-top:10px;"></div>
+      <div id="upload-status" class="upload-status small"></div>
+    </div>
+
+    <div class="card">
+      <h2>Latest STL Preview</h2>
+      <div id="stl-preview" class="small">Waiting for CAD output...</div>
+      <div id="stl-preview-link"></div>
     </div>
 
     <div class="card">
@@ -63,7 +66,12 @@
       function appendLog(channel, type, data) {
         const ts = new Date().toLocaleTimeString();
         const line = document.createElement('div');
-        line.innerHTML = '<span style="color:#9aa6b2">[' + ts + ']</span> <b style="color:#fff">' + channel + '</b> ' + '<span style="color:#7fd3b6">' + type + '</span> ' + '<span style="color:#cfe8ff"> ' + (typeof data === "object" ? JSON.stringify(data) : String(data)) + '</span>';
+        line.className = 'log-entry';
+        line.innerHTML =
+          '<span class="log-timestamp">[' + ts + ']</span> ' +
+          '<b class="log-channel">' + channel + '</b> ' +
+          '<span class="log-event">' + type + '</span> ' +
+          '<span class="log-data">' + (typeof data === 'object' ? JSON.stringify(data) : String(data)) + '</span>';
         logEl.appendChild(line);
         logEl.scrollTop = logEl.scrollHeight;
       }
@@ -103,6 +111,33 @@
       attach(swarm, 'swarm', ['agent_message']);
       attach(cad, 'cad', ['stl_ready']);
       attach(planner, 'planner', ['reasoning_step']);
+
+      const metricsStatus = document.getElementById('metrics-status');
+      const metricsJson = document.getElementById('metrics-json');
+      const stlPreview = document.getElementById('stl-preview');
+      const stlPreviewLink = document.getElementById('stl-preview-link');
+
+      function renderMetrics(payload) {
+        const score = payload?.score ?? payload?.composite_score ?? payload?.evaluation?.score ?? 'n/a';
+        const valid = payload?.valid;
+        const revision = payload?.id ?? payload?.revision_id ?? payload?.generation ?? 'unknown';
+        metricsStatus.textContent = `Latest evaluation: score=${score} valid=${valid ?? 'unknown'} revision=${revision}`;
+        metricsJson.textContent = JSON.stringify(payload, null, 2);
+      }
+
+      optimizer.on('score_update', (d) => {
+        renderMetrics(d);
+      });
+
+      cad.on('stl_ready', (d) => {
+        if (d && d.stl_url) {
+          stlPreview.textContent = 'STL ready. Open or download below:';
+          stlPreviewLink.innerHTML = `<a href="${d.stl_url}" target="_blank" rel="noreferrer" class="preview-link">${d.stl_url}</a>`;
+        } else {
+          stlPreview.textContent = 'STL event received, but no preview URL was provided.';
+          stlPreviewLink.textContent = '';
+        }
+      });
 
       // Test button triggers backend test endpoint
       document.getElementById('btn-test').addEventListener('click', () => {

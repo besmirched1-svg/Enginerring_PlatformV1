@@ -15,7 +15,6 @@ __pycache__
 
 # Local dev outputs (produced at runtime inside the container)
 outputs/
-output/
 logs/
 workspace/processing/
 workspace/failed/

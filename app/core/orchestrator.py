@@ -42,7 +42,7 @@ class EngineeringOrchestrator:
             self.event_bus.emit(event_type, payload or {})
 
     def _make_stl_url(self, machine_name: str, revision_id: str) -> str:
-        return f"/output/revisions/{machine_name}/{revision_id}/output.stl"
+        return f"/outputs/revisions/{machine_name}/{revision_id}/output.stl"
 
     def _extract_evaluation_metrics(self, evaluation_result: Dict[str, Any]) -> Dict[str, Any]:
         metrics = evaluation_result.get("metrics", {})
@@ -73,7 +73,7 @@ class EngineeringOrchestrator:
         
         self._emit_event("build_started", {"machine_name": machine_name, "revision_id": revision_id, "chain_id": chain_id})
         
-        rev_dir = os.path.normpath(os.path.join("output", "revisions", machine_name, revision_id))
+        rev_dir = os.path.normpath(os.path.join("outputs", "revisions", machine_name, revision_id))
         os.makedirs(rev_dir, exist_ok=True)
         
         scad_path = os.path.join(rev_dir, "model.scad")

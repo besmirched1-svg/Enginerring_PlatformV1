@@ -91,7 +91,7 @@ class OptimizationAgent(SwarmAgent):
 
 
 class MultiAgentSwarm:
-    def __init__(self, session_id: str, output_dir: str = "./output"):
+    def __init__(self, session_id: str, output_dir: str = "./outputs"):
         self.session_id = session_id
         self.event_bus = get_event_bus()
         self.output_dir = output_dir
@@ -122,7 +122,7 @@ class MultiAgentSwarm:
             OpenSCADService.render_scad_to_stl(candidate["scad"], stl_path)
             candidate["stl_path"] = stl_path
             relative_path = os.path.relpath(stl_path, self.output_dir)
-            candidate["stl_url"] = "/output/" + relative_path.replace(os.path.sep, "/")
+            candidate["stl_url"] = "/outputs/" + relative_path.replace(os.path.sep, "/")
             self._broadcast("stl_generated", {
                 "id": candidate["id"],
                 "generation": candidate.get("generation", 0),
@@ -197,7 +197,7 @@ class MultiAgentSwarm:
         stl_url = candidate.get("stl_url")
         if not stl_url and candidate.get("stl_path"):
             normalized = candidate["stl_path"].replace(os.path.sep, "/")
-            marker = "/output/"
+            marker = "/outputs/"
             index = normalized.find(marker)
             if index != -1:
                 stl_url = normalized[index:]

@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY --chown=appuser:appuser . /app
 
 # Environment variable for output directory
-ENV OUTPUT_DIR=/app/output
+ENV OUTPUT_DIR=/app/outputs
 
 # Expose API port
 EXPOSE 8000

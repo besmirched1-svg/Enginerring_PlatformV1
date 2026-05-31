@@ -56,7 +56,7 @@ async def route_event_to_socketio(event_type, payload):
     et = str(event_type).lower()
 
     # Optimizer scoring
-    if "score" in et or "validation" in et:
+    if "evaluation" in et or "score" in et or "validation" in et:
         await emit_optimizer_event("score_update", payload)
 
     # Optimizer mutations / design deltas
@@ -69,6 +69,9 @@ async def route_event_to_socketio(event_type, payload):
 
     # CAD / STL events
     elif "cad" in et or "stl" in et:
+        await emit_cad_event("stl_ready", payload)
+
+    elif "revision" in et or "promoted" in et:
         await emit_cad_event("stl_ready", payload)
 
     # Planner reasoning

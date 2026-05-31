@@ -15,7 +15,7 @@ from app.workers.tasks import run_optimization_loop
 from app.core.events import EventBus, NullEventBus
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 UPLOAD_DIR = os.path.join(BASE_DIR, "workspace", "uploads")
 DASHBOARD_FILE = os.path.join(BASE_DIR, "dashboard.html")
 
@@ -40,7 +40,7 @@ if not os.path.exists(OUTPUT_DIR):
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
+app.mount("/outputs", StaticFiles(directory=OUTPUT_DIR), name="outputs")
 app.mount("/static", StaticFiles(directory=BASE_DIR), name="static")
 
 @app.get("/")
@@ -94,6 +94,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 main_async_loop = None
+socketio_event_loop = None
 
 def thread_safe_websocket_bridge(session_id: str, event_type: str, payload: dict = None):
     global main_async_loop
@@ -156,8 +157,9 @@ from app.realtime.events import (
 
 @app.on_event("startup")
 async def _on_startup():
-    loop = asyncio.get_running_loop()
-    schedule_telemetry_probe(loop)
+    global socketio_event_loop
+    socketio_event_loop = asyncio.get_running_loop()
+    schedule_telemetry_probe(socketio_event_loop)
 
 # --- Socket.IO eventbus bridge ---
 async def diag_emit(namespace, event, payload):
@@ -178,11 +180,15 @@ async def diag_router(event_type, payload):
 
 def socketio_bridge(event_type, payload=None):
     print(f"[DIAG] EVENTBUS ? {event_type} | {payload}")
+    coro = diag_router(event_type, payload)
     try:
-        asyncio.create_task(diag_router(event_type, payload))
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
     except RuntimeError:
-        loop = asyncio.get_event_loop()
-        loop.create_task(diag_router(event_type, payload))
+        if socketio_event_loop is not None and socketio_event_loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, socketio_event_loop)
+        else:
+            print(f"[DIAG] EVENTBUS WARNING: no running loop for event {event_type}")
 
 EventBus.broadcast = socketio_bridge
 EventBus.publish = socketio_bridge
