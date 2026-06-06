@@ -10,7 +10,7 @@ from app.core.scoring import DesignScoringEngine, EvaluationFeedback
 from app.core.evolution import ReinforcementOptimizer
 from app.cad.openscad_service import OpenSCADService
 
-logger = logging.getLogger("app.core.swarm")
+logger = logging.getLogger("engine.swarm")
 
 Candidate = Dict[str, Any]
 

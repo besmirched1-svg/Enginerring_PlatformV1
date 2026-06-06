@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app.core.paths import STL_DIR, IMAGES_DIR, PREVIEW_DIR
 
-logger = logging.getLogger("app.cad.renderer")
+logger = logging.getLogger("engine.cad.renderer")
 
 # High-resolution snapshot dimensions for assembly previews.
 ASSEMBLY_IMAGE_SIZE = "1920,1440"

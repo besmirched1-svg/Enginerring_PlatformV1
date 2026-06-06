@@ -29,7 +29,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.events import get_event_bus, NullEventBus
 
-logger = logging.getLogger("app.api.websocket")
+logger = logging.getLogger("engine.api.websocket")
 
 router = APIRouter()
 

@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-logger = logging.getLogger("app.cad.openscad_service")
+logger = logging.getLogger("engine.cad.openscad_service")
 
 
 # Default install location for OpenSCAD on Windows; ignored on other OSes.

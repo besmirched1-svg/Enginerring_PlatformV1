@@ -25,11 +25,42 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from typing import Any, AsyncIterator, Optional
 
-logger = logging.getLogger("app.core.events")
+logger = logging.getLogger("engine.events")
 
 EVENTS_CHANNEL = "engineering.events"
+MAX_FAILED_EVENTS_TRACKED = 10
+
+
+class EventMetrics:
+    """Tracks event publishing metrics and failures."""
+
+    def __init__(self):
+        self.total_published = 0
+        self.total_failed = 0
+        self.failed_events = deque(maxlen=MAX_FAILED_EVENTS_TRACKED)
+
+    def record_success(self):
+        self.total_published += 1
+
+    def record_failure(self, event_type: str, error: str):
+        self.total_failed += 1
+        self.failed_events.append({
+            "type": event_type,
+            "error": error,
+            "timestamp": time.time(),
+        })
+        logger.error(f"Event publication failed for {event_type}: {error}")
+
+    def get_metrics(self) -> dict[str, Any]:
+        return {
+            "total_published": self.total_published,
+            "total_failed": self.total_failed,
+            "failed_count": len(self.failed_events),
+            "recent_failures": list(self.failed_events),
+        }
 
 
 def _redis_url() -> Optional[str]:
@@ -57,6 +88,10 @@ class EventBus:
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         raise NotImplementedError
 
+    async def async_publish(self, event_type: str, payload: dict[str, Any] | None = None, timeout: float = 5.0) -> None:
+        """Non-blocking async publish with timeout."""
+        raise NotImplementedError
+
     def broadcast(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         return self.publish(event_type, payload)
 
@@ -74,9 +109,10 @@ class NullEventBus(EventBus):
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         logger.debug("event(null) %s payload=%s", event_type, payload)
 
+    async def async_publish(self, event_type: str, payload: dict[str, Any] | None = None, timeout: float = 5.0) -> None:
+        logger.debug("event(null-async) %s payload=%s", event_type, payload)
+
     async def subscribe(self) -> AsyncIterator[dict[str, Any]]:
-        # Block forever; nothing to yield. Used by websocket clients that
-        # connect when Redis is down — they get a hello message and idle.
         while True:
             await asyncio.sleep(3600)
             yield {}  # pragma: no cover
@@ -86,11 +122,11 @@ class RedisEventBus(EventBus):
     """Redis pub/sub-backed event bus. Sync publish, async subscribe."""
 
     def __init__(self, url: str):
-        # Imported lazily so the module is importable when redis isn't installed.
         import redis
-        import redis.asyncio as aioredis  # noqa: F401  (loaded only on first use)
+        import redis.asyncio as aioredis  # noqa: F401
         self._url = url
         self._sync_client = redis.Redis.from_url(url, decode_responses=True)
+        self._metrics = EventMetrics()
 
     def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         envelope = {
@@ -100,9 +136,33 @@ class RedisEventBus(EventBus):
         }
         try:
             self._sync_client.publish(EVENTS_CHANNEL, json.dumps(envelope, default=str))
-        except Exception:
-            # Never let a broken event bus block a build.
-            logger.exception("Failed to publish event %s", event_type)
+            self._metrics.record_success()
+        except Exception as exc:
+            self._metrics.record_failure(event_type, str(exc))
+
+    async def async_publish(self, event_type: str, payload: dict[str, Any] | None = None, timeout: float = 5.0) -> None:
+        """Non-blocking async publish with timeout."""
+        import redis.asyncio as aioredis
+
+        envelope = {
+            "type": event_type,
+            "ts": time.time(),
+            "payload": payload or {},
+        }
+        try:
+            client = aioredis.from_url(self._url, decode_responses=True)
+            await asyncio.wait_for(
+                client.publish(EVENTS_CHANNEL, json.dumps(envelope, default=str)),
+                timeout=timeout
+            )
+            self._metrics.record_success()
+            await client.close()
+        except asyncio.TimeoutError:
+            error = f"async_publish timeout after {timeout}s"
+            self._metrics.record_failure(event_type, error)
+            logger.warning(f"Event {event_type}: {error}")
+        except Exception as exc:
+            self._metrics.record_failure(event_type, str(exc))
 
     async def subscribe(self) -> AsyncIterator[dict[str, Any]]:
         import redis.asyncio as aioredis
@@ -128,8 +188,8 @@ class RedisEventBus(EventBus):
                 await pubsub.unsubscribe(EVENTS_CHANNEL)
                 await pubsub.close()
                 await client.close()
-            except Exception:
-                logger.debug("Error closing Redis subscription", exc_info=True)
+            except Exception as exc:
+                logger.debug(f"Error closing Redis subscription: {str(exc)}")
 
 
 # ---------------------------------------------------------------------------
@@ -165,3 +225,11 @@ def get_event_bus() -> EventBus:
 def publish(event_type: str, payload: dict[str, Any] | None = None) -> None:
     """Convenience wrapper for one-line publish calls from anywhere in the app."""
     get_event_bus().publish(event_type, payload)
+
+
+def get_event_metrics() -> dict[str, Any]:
+    """Get event bus metrics (published, failed, recent failures)."""
+    bus = get_event_bus()
+    if isinstance(bus, RedisEventBus):
+        return bus._metrics.get_metrics()
+    return {"status": "metrics_unavailable", "bus_type": type(bus).__name__}

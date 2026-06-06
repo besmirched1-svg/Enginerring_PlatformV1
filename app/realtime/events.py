@@ -1,4 +1,7 @@
 import socketio
+import logging
+
+logger = logging.getLogger("engine.realtime.events")
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -16,11 +19,11 @@ PLAN_NS = "/planner"
 # --- Optimizer Events ---
 @sio.on("connect", namespace=OPT_NS)
 async def optimizer_connect(sid, environ):
-    print(f"[optimizer] client connected: {sid}")
+    logger.debug(f"Optimizer client connected: {sid}")
 
 @sio.on("disconnect", namespace=OPT_NS)
 async def optimizer_disconnect(sid):
-    print(f"[optimizer] client disconnected: {sid}")
+    logger.debug(f"Optimizer client disconnected: {sid}")
 
 async def emit_optimizer_event(event_type, payload):
     await sio.emit(event_type, payload, namespace=OPT_NS)
@@ -28,7 +31,7 @@ async def emit_optimizer_event(event_type, payload):
 # --- Swarm Events ---
 @sio.on("connect", namespace=SWARM_NS)
 async def swarm_connect(sid, environ):
-    print(f"[swarm] client connected: {sid}")
+    logger.debug(f"Swarm client connected: {sid}")
 
 async def emit_swarm_event(event_type, payload):
     await sio.emit(event_type, payload, namespace=SWARM_NS)
@@ -36,7 +39,7 @@ async def emit_swarm_event(event_type, payload):
 # --- CAD Events ---
 @sio.on("connect", namespace=CAD_NS)
 async def cad_connect(sid, environ):
-    print(f"[cad] client connected: {sid}")
+    logger.debug(f"CAD client connected: {sid}")
 
 async def emit_cad_event(event_type, payload):
     await sio.emit(event_type, payload, namespace=CAD_NS)
@@ -44,7 +47,7 @@ async def emit_cad_event(event_type, payload):
 # --- Planner Events ---
 @sio.on("connect", namespace=PLAN_NS)
 async def planner_connect(sid, environ):
-    print(f"[planner] client connected: {sid}")
+    logger.debug(f"Planner client connected: {sid}")
 
 async def emit_planner_event(event_type, payload):
     await sio.emit(event_type, payload, namespace=PLAN_NS)

@@ -28,7 +28,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger("app.core.evaluation")
+logger = logging.getLogger("engine.evaluation")
 
 
 # Threshold below which the build emits an `improvement_suggested` event.

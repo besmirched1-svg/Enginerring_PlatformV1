@@ -9,7 +9,7 @@ from watchdog.observers.polling import PollingObserver
 
 from app.workspace.ingestion import ingest_file
 
-logger = logging.getLogger("app.workspace.watcher")
+logger = logging.getLogger("engine.workspace.watcher")
 
 UPLOAD_DIR = Path("workspace/uploads")
 

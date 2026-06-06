@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any, Callable, Optional
 
-logger = logging.getLogger("app.core.queue")
+logger = logging.getLogger("engine.queue")
 
 BUILD_QUEUE = "cad_builds"
 

@@ -2,7 +2,7 @@
 from pathlib import Path
 from datetime import datetime
 
-logger = logging.getLogger("app.core.dashboard")
+logger = logging.getLogger("engine.dashboard")
 
 def generate_web_dashboard(machine_config: dict, output_dir: Path):
     html_path = output_dir / "index.html"

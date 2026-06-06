@@ -1,11 +1,14 @@
 import os
 import json
 import asyncio
+import logging
 import traceback
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+logger = logging.getLogger("engine.main")
 
 # --- Socket.IO Integration ---
 from app.realtime.events import sio
@@ -109,7 +112,7 @@ def thread_safe_websocket_bridge(session_id: str, event_type: str, payload: dict
             lambda: asyncio.create_task(manager.broadcast_message(message))
         )
     else:
-        print(f"[BRIDGE DROP] Loop not ready: {event_type}")
+        logger.warning(f"WebSocket bridge: event loop not ready for {event_type}")
 
 
 def supervised_worker_wrapper(prompt, session_id):
@@ -163,7 +166,7 @@ async def _on_startup():
 
 # --- Socket.IO eventbus bridge ---
 async def diag_emit(namespace, event, payload):
-    print(f"[DIAG] EMIT ? {namespace}:{event} | {payload}")
+    logger.debug(f"Routing to {namespace}:{event}")
     if namespace == "optimizer":
         await emit_optimizer_event(event, payload)
     elif namespace == "swarm":
@@ -174,12 +177,12 @@ async def diag_emit(namespace, event, payload):
         await emit_planner_event(event, payload)
 
 async def diag_router(event_type, payload):
-    print(f"[DIAG] ROUTER RECEIVED ? {event_type} | {payload}")
+    logger.debug(f"Routing event {event_type} to socket.io")
     await route_event_to_socketio(event_type, payload)
 
 
 def socketio_bridge(event_type, payload=None):
-    print(f"[DIAG] EVENTBUS ? {event_type} | {payload}")
+    logger.debug(f"EventBus publish: {event_type}")
     coro = diag_router(event_type, payload)
     try:
         loop = asyncio.get_running_loop()
@@ -188,13 +191,13 @@ def socketio_bridge(event_type, payload=None):
         if socketio_event_loop is not None and socketio_event_loop.is_running():
             asyncio.run_coroutine_threadsafe(coro, socketio_event_loop)
         else:
-            print(f"[DIAG] EVENTBUS WARNING: no running loop for event {event_type}")
+            logger.warning(f"EventBus warning: no running loop for event {event_type}")
 
 EventBus.broadcast = socketio_bridge
 EventBus.publish = socketio_bridge
 EventBus.emit = socketio_bridge
 
-print("[DIAG] Telemetry diagnostics active.")
+logger.debug("EventBus socketio bridge initialized")
 
 @app.get('/__diag/pwd')
 def _diag_pwd():
@@ -207,9 +210,9 @@ _mount_target = socket_app if 'socket_app' in globals() else app
 if _mount_target is not None:
     try:
         _mount_target.mount('/', StaticFiles(directory='.', html=True), name='static')
-        print('StaticFiles mounted on', 'socket_app' if 'socket_app' in globals() else 'app')
+        logger.info("StaticFiles mounted successfully")
     except Exception as _e:
-        print('StaticFiles mount failed:', _e)
+        logger.error(f"StaticFiles mount failed: {_e}")
 else:
-    print('No ASGI app variable found to mount static files on.')
+    logger.warning("No ASGI app variable found to mount static files on")
 # --- end single static mount ---

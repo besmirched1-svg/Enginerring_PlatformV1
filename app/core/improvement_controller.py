@@ -8,6 +8,7 @@ from typing import Any
 from app.core.events import EVENTS_CHANNEL
 from app.core.mutation import propose_next_config
 from app.core.improvement_chain import ImprovementChainManager, MAX_ATTEMPTS
+from app.core.resilience import RedisHeartbeat, exponential_backoff_retry
 
 logger = logging.getLogger("engine.improvement_controller")
 
@@ -17,7 +18,8 @@ class ImprovementLoopController:
         self.orchestrator = orchestrator
         self.queue_client = queue_client
         self.chain_manager = ImprovementChainManager(redis_client)
-        self.pubsub = self.redis.pubsub()
+        self.heartbeat = RedisHeartbeat(redis_client, check_interval=5.0)
+        self.pubsub = None
         self._thread = None
         self._running = False
 
@@ -43,6 +45,14 @@ class ImprovementLoopController:
             chain_id = f"chain_{machine_name}_{uuid.uuid4().hex[:8]}"
         active = self.chain_manager.init_chain(chain_id, machine_name, root_revision)
         return active
+
+    @exponential_backoff_retry(max_attempts=3, initial_delay=0.5)
+    def _safe_pubsub_subscribe(self):
+        """Subscribe to event channel with retry logic."""
+        if not self.pubsub:
+            self.pubsub = self.redis.pubsub()
+        self.pubsub.subscribe(EVENTS_CHANNEL)
+        logger.info("Subscribed to improvement event channel with resilience enabled")
 
     def _handle_improvement_payload(self, payload: dict[str, Any]) -> None:
         chain_id = payload.get("chain_id")
@@ -93,29 +103,54 @@ class ImprovementLoopController:
 
     def _listen_loop(self) -> None:
         try:
-            self.pubsub.subscribe(EVENTS_CHANNEL)
+            self._safe_pubsub_subscribe()
             logger.info("Autonomous improvement controller subscribed to event bus channel.")
-            for message in self.pubsub.listen():
-                if not self._running:
-                    break
-                if message.get("type") != "message":
-                    continue
+
+            while self._running:
                 try:
-                    payload_raw = message.get("data")
-                    if isinstance(payload_raw, bytes):
-                        payload_raw = payload_raw.decode("utf-8")
-                    envelope = json.loads(payload_raw)
-                    if envelope.get("type") != "improvement_suggested":
-                        continue
-                    self._check_disk_capacity_safety()
-                    self._handle_improvement_payload(envelope.get("payload", {}))
+                    # Check Redis health periodically
+                    if not self.heartbeat.check_health():
+                        logger.warning("Redis unhealthy, waiting for recovery...")
+                        if not self.heartbeat.wait_for_recovery(max_wait=30.0):
+                            logger.error("Redis recovery timeout, gracefully degrading")
+                            time.sleep(5.0)
+                            continue
+
+                    # Listen with timeout to allow health checks
+                    for message in self.pubsub.listen():
+                        if not self._running:
+                            break
+
+                        if message.get("type") != "message":
+                            continue
+
+                        try:
+                            payload_raw = message.get("data")
+                            if isinstance(payload_raw, bytes):
+                                payload_raw = payload_raw.decode("utf-8")
+                            envelope = json.loads(payload_raw)
+                            if envelope.get("type") != "improvement_suggested":
+                                continue
+
+                            self._check_disk_capacity_safety()
+                            self._handle_improvement_payload(envelope.get("payload", {}))
+                        except json.JSONDecodeError as exc:
+                            logger.error(f"Invalid JSON in improvement event: {str(exc)}")
+                        except Exception as exc:
+                            logger.error(f"Improvement loop listener error: {str(exc)}")
+
                 except Exception as exc:
-                    logger.error(f"Improvement loop listener error: {str(exc)}")
+                    logger.error(f"Redis listen loop failed: {str(exc)}. Attempting to reconnect...")
+                    self.pubsub = None
+                    time.sleep(2.0)
+
         finally:
             try:
-                self.pubsub.close()
-            except Exception:
-                logger.debug("Failed to close improvement loop pubsub cleanly.")
+                if self.pubsub:
+                    self.pubsub.close()
+                    logger.debug("Improvement loop pubsub closed cleanly")
+            except Exception as exc:
+                logger.debug(f"Failed to close improvement loop pubsub cleanly: {str(exc)}")
 
     def start(self) -> None:
         if self._running:

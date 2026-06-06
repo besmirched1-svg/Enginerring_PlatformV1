@@ -5,7 +5,7 @@ import logging
 
 from app.core.paths import SCAD_DIR
 
-logger = logging.getLogger("app.cad.generator")
+logger = logging.getLogger("engine.cad.generator")
 
 
 # ---------------------------------------------------------------------------

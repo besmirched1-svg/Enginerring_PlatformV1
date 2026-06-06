@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from app.core.events import get_event_bus
 from app.core.orchestrator import EngineeringOrchestrator
 
-logger = logging.getLogger("app.core.tasks")
+logger = logging.getLogger("engine.tasks")
 
 
 def run_build_job(

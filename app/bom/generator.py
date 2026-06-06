@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 import logging
 
-logger = logging.getLogger("app.bom.generator")
+logger = logging.getLogger("engine.bom.generator")
 
 
 # ---------------------------------------------------------------------------

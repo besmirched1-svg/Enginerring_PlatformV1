@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from app.core.orchestrator import EngineeringAgent
 
-logger = logging.getLogger("app.importers.markdown_importer")
+logger = logging.getLogger("engine.importers.markdown_importer")
 agent = EngineeringAgent()
 
 def import_markdown(file_path: Path):

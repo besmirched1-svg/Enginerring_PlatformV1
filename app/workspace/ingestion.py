@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.importers.yaml_importer import import_yaml, InvalidMachineConfigError
 
-logger = logging.getLogger("app.workspace.ingestion")
+logger = logging.getLogger("engine.workspace.ingestion")
 
 PROCESSING_DIR = Path("workspace/processing")
 FAILED_DIR = Path("workspace/failed")

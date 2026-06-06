@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from app.core.orchestrator import EngineeringAgent
 from app.core.schemas import MachineConfig
 
-logger = logging.getLogger("app.importers.yaml_importer")
+logger = logging.getLogger("engine.importers.yaml_importer")
 
 agent = EngineeringAgent()
 
