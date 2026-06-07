@@ -151,7 +151,7 @@ class MachineConfig(BaseModel):
         return _coerce_frame(v)
 
     @validator("hopper", "roller", "spindle", "drum", "compression_rollers", always=True)
-    def _at_least_one_subsystem(cls, v, values, field):
+    def _at_least_one_subsystem(cls, v, values):
         # We can't fully enforce "at least one subsystem present" in a per-
         # field validator, so the actual check lives in `root_validator`.
         return v
