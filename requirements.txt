@@ -1,5 +1,9 @@
-﻿fastapi>=0.100.0
-uvicorn>=0.22.0
-redis>=4.6.0
-pydantic>=2.0.0
-requests==2.31.0
+fastapi
+uvicorn
+python-socketio
+python-multipart
+pydantic
+jinja2
+watchdog
+requests
+python-socketio

@@ -204,15 +204,13 @@ def _diag_pwd():
     import os
     return {'cwd': os.getcwd(), 'files': sorted([f for f in os.listdir('.') if f.endswith('.html') or f.endswith('.py')])}
 
-# --- single static files mount for dashboard serving ---
-_mount_target = socket_app if 'socket_app' in globals() else app
-
-if _mount_target is not None:
-    try:
-        _mount_target.mount('/', StaticFiles(directory='.', html=True), name='static')
-        logger.info("StaticFiles mounted successfully")
-    except Exception as _e:
-        logger.error(f"StaticFiles mount failed: {_e}")
-else:
-    logger.warning("No ASGI app variable found to mount static files on")
-# --- end single static mount ---
+# --- Fixed: Mount directly to the FastAPI 'app' instance ---
+try:
+    # Ensure we are mounting to 'app' (FastAPI), not the 'socket_app' wrapper
+    app.mount("/static", StaticFiles(directory='.', html=True), name="static")
+    logger.info("StaticFiles mounted successfully to FastAPI app")
+except Exception as _e:
+    logger.error(f"StaticFiles mount failed: {_e}")
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}

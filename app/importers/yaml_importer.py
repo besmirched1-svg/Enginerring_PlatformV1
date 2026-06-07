@@ -6,12 +6,13 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from app.core.orchestrator import EngineeringAgent
+from app.core.orchestrator import EngineeringOrchestrator
+from app.core.events import get_event_bus
 from app.core.schemas import MachineConfig
 
 logger = logging.getLogger("engine.importers.yaml_importer")
 
-agent = EngineeringAgent()
+agent = EngineeringOrchestrator(event_bus=get_event_bus())
 
 ASSEMBLY_KEYS = {"roller", "hopper", "frame"}
 INDUSTRIAL_KEYS = {"spindle", "drum", "compression_rollers"}
@@ -24,7 +25,7 @@ class InvalidMachineConfigError(ValueError):
 def _normalize(data: dict) -> dict:
     """
     Translate a parsed YAML payload into the canonical machine config shape
-    consumed by EngineeringAgent.generate_machine.
+    consumed by EngineeringOrchestrator.run_machine_job.
 
     Accepted input shapes:
       1. Wrapped:        { machine: { name, ... } }
@@ -87,6 +88,6 @@ def import_yaml(file_path: Path):
 
     machine = _validate(machine)
 
-    result = agent.generate_machine(machine)
+    result = agent.run_machine_job(machine.get('name'), machine)
     logger.info("Build result: %s", result)
     return result

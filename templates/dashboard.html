@@ -1,0 +1,73 @@
+﻿<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <title>Swarm Engineering Dashboard</title>
+    <link rel='stylesheet' href='/static/style.css'>
+    <script type='importmap'>
+      { 'imports': { 'three': 'https://unpkg.com/three@0.160.0/build/three.module.js', 'three/examples/jsm/loaders/STLLoader.js': 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/STLLoader.js', 'three/examples/jsm/controls/OrbitControls.js': 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js' } }
+    </script>
+</head>
+<body>
+    <div class='dashboard-grid'>
+        <div class='card metrics'>
+            <h2>Swarm Metrics</h2>
+            <p>Score: <span id='score'>n/a</span></p>
+            <p>Stability: <span id='stability'>n/a</span></p>
+            <p>Efficiency: <span id='efficiency'>n/a</span></p>
+            <p>Simplicity: <span id='simplicity'>n/a</span></p>
+        </div>
+        <div id='cad-preview' class='card preview'>
+            <h2>3D Model</h2>
+        </div>
+    </div>
+    <script type='module'>
+        import * as THREE from 'three';
+        import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+        // Robust Metric Resolver
+        window.resolveMetric = (data, keys) => {
+            for (let key of keys) {
+                if (data[key] !== undefined) return data[key];
+                if (data.feedback && data.feedback[key] !== undefined) return data.feedback[key];
+                if (data.evaluation && data.evaluation[key] !== undefined) return data.evaluation[key];
+                if (data.metrics && data.metrics[key] !== undefined) return data.metrics[key];
+            }
+            return 'n/a';
+        };
+
+        // Initialize Viewer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(300, 300);
+        document.getElementById('cad-preview').appendChild(renderer.domElement);
+        new OrbitControls(camera, renderer.domElement);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        camera.position.z = 50;
+
+        window.loadModel = (url) => {
+            new STLLoader().load(url, (geom) => {
+                scene.children.filter(c => c.isMesh).forEach(c => scene.remove(c));
+                scene.add(new THREE.Mesh(geom, new THREE.MeshPhongMaterial({color: 0x00ff00})));
+            });
+        };
+
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+        animate();
+
+        // WebSocket Handling
+        const socket = io();
+        socket.on('revision_promoted', (data) => {
+            document.getElementById('score').innerText = resolveMetric(data, ['composite_score', 'score']) + '%';
+            document.getElementById('stability').innerText = resolveMetric(data, ['structural_stability']) + '%';
+            document.getElementById('efficiency').innerText = resolveMetric(data, ['material_efficiency']) + '%';
+            document.getElementById('simplicity').innerText = resolveMetric(data, ['manufacturing_simplicity']) + '%';
+            
+            if (data.stl_url) window.loadModel(data.stl_url);
+        });
+    </script>
+    <script src='https://cdn.socket.io/4.7.2/socket.io.min.js'></script>
+</body>
+</html>
