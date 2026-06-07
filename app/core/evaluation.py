@@ -309,7 +309,10 @@ def _constraint_compliance(config: dict) -> MetricResult:
     comp = config.get("compression_rollers") or {}
     if comp:
         gap = _i(comp, "compression_gap")
-        if gap == 0:
+        if gap < 0:
+            issues.append(f"compression_gap={gap}: negative gap is physically impossible")
+            score -= 0.40
+        elif gap == 0:
             issues.append("compression_gap=0: parts touching, no nip clearance")
             score -= 0.20
         elif gap >= 75:  # within 5 of the 80 mm hard upper bound

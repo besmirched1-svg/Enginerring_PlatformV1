@@ -1,20 +1,8 @@
-# app/core/schemas.py
-#
-# Pydantic v1 validation schemas for machine configs.
-# Used at every external input boundary:
-#   - FastAPI request bodies (app/api/routes.py)
-#   - YAML ingestion (app/importers/yaml_importer.py)
-#
-# Bumping to Pydantic v2 requires a coupled bump of fastapi (>=0.100).
-# That migration is intentionally deferred to a separate change.
-
+﻿# app/core/schemas.py  — Pydantic v2 validated machine configs.
+from __future__ import annotations
 from typing import Optional, Any, Dict
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-
-# ---------------------------------------------------------------------------
-# Legacy small-machine schemas
-# ---------------------------------------------------------------------------
 
 class RollerConfig(BaseModel):
     diameter: int = Field(180, gt=0)
@@ -39,10 +27,6 @@ class LegacyFrameConfig(BaseModel):
     material: Optional[str] = "mild_steel"
 
 
-# ---------------------------------------------------------------------------
-# HTDS-P2 industrial schemas
-# ---------------------------------------------------------------------------
-
 class SpindleConfig(BaseModel):
     shaft_length: int = Field(4000, gt=0)
     shaft_od: int = Field(260, gt=0)
@@ -52,9 +36,10 @@ class SpindleConfig(BaseModel):
     flight_turns: int = Field(10, gt=0)
     material: Optional[str] = "en24t"
 
-    @validator("flight_od")
-    def flight_od_exceeds_shaft(cls, v, values):
-        shaft = values.get("shaft_od")
+    @field_validator("flight_od")
+    @classmethod
+    def flight_od_exceeds_shaft(cls, v: int, info: Any) -> int:
+        shaft = (info.data or {}).get("shaft_od")
         if shaft is not None and v <= shaft:
             raise ValueError(f"flight_od ({v}) must exceed shaft_od ({shaft})")
         return v
@@ -88,9 +73,10 @@ class SkidFrameConfig(BaseModel):
     rail_count: Optional[int] = Field(2, gt=0)
     material: Optional[str] = "mild_steel"
 
-    @validator("skid_width")
-    def skid_must_clear_rails(cls, v, values):
-        rail_b = values.get("rail_b")
+    @field_validator("skid_width")
+    @classmethod
+    def skid_must_clear_rails(cls, v: int, info: Any) -> int:
+        rail_b = (info.data or {}).get("rail_b")
         if rail_b is not None and v <= 2 * rail_b:
             raise ValueError(
                 f"skid_width ({v}) must exceed 2 * rail_b ({2 * rail_b}) "
@@ -107,61 +93,34 @@ class CompressionRollerConfig(BaseModel):
     material: Optional[str] = "hardox_500"
 
 
-# ---------------------------------------------------------------------------
-# Top-level machine config
-#
-# `frame` accepts either SkidFrameConfig (industrial) or LegacyFrameConfig
-# (small machines). We discriminate by which keys the dict carries.
-# ---------------------------------------------------------------------------
-
 def _coerce_frame(value: Any) -> Optional[Dict[str, Any]]:
-    """Validate frame against industrial then legacy schema; return dict."""
     if value is None:
         return None
     if not isinstance(value, dict):
         raise ValueError(f"frame must be a mapping, got {type(value).__name__}")
-
     industrial_keys = {"rail_length", "rail_a", "rail_b", "skid_width", "cross_a"}
     if industrial_keys & value.keys():
-        return SkidFrameConfig(**value).dict()
-    return LegacyFrameConfig(**value).dict()
+        return SkidFrameConfig(**value).model_dump()
+    return LegacyFrameConfig(**value).model_dump()
 
 
 class MachineConfig(BaseModel):
     name: str = "machine"
-
-    # Industrial subsystems (HTDS-P2)
     spindle: Optional[SpindleConfig] = None
     drum: Optional[DrumConfig] = None
     compression_rollers: Optional[CompressionRollerConfig] = None
-
-    # Frame is dual-schema; we keep it as a raw dict after validation so the
-    # downstream BOM/SCAD generators can dispatch on key presence.
     frame: Optional[Dict[str, Any]] = None
-
-    # Legacy small-machine subsystems
     roller: Optional[RollerConfig] = None
     hopper: Optional[HopperConfig] = None
 
-    class Config:
-        extra = "forbid"  # reject unknown top-level keys to catch typos early
+    model_config = {"extra": "forbid"}
 
-    @validator("frame", pre=True)
-    def _validate_frame(cls, v):
+    @field_validator("frame", mode="before")
+    @classmethod
+    def _validate_frame(cls, v: Any) -> Any:
         return _coerce_frame(v)
-
-    @validator("hopper", "roller", "spindle", "drum", "compression_rollers", always=True)
-    def _at_least_one_subsystem(cls, v, values):
-        # We can't fully enforce "at least one subsystem present" in a per-
-        # field validator, so the actual check lives in `root_validator`.
-        return v
 
     @classmethod
     def from_normalized_dict(cls, data: Dict[str, Any]) -> "MachineConfig":
-        """
-        Convenience constructor: accepts the YAML-normalized shape (which may
-        carry explicit ``None`` placeholders for missing subsystems) and
-        strips them before validation.
-        """
         cleaned = {k: v for k, v in data.items() if v is not None}
         return cls(**cleaned)

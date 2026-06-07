@@ -70,10 +70,8 @@ class EngineeringOrchestrator:
         attempt_in_chain: int = 0
     ) -> Dict[str, Any]:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Running container compilation pipeline for {machine_name} [{revision_id}]")
-        logger.info("CONFIG RECEIVED: %s", config)
-        logger.info("CONFIG RECEIVED: %s", config)
-        logger.info("CONFIG RECEIVED: %s", config)
+        logger.info("Running build pipeline for %s [%s]", machine_name, revision_id)
+        logger.info("Config received: %s", config)
         
         champion = get_current_champion(machine_name)
         old_rev = champion.get("revision", "v0")

@@ -1,18 +1,12 @@
 # app/importers/yaml_importer.py
-
+from __future__ import annotations
 import logging
 from pathlib import Path
-
 import yaml
 from pydantic import ValidationError
-
-from app.core.orchestrator import EngineeringOrchestrator
-from app.core.events import get_event_bus
 from app.core.schemas import MachineConfig
 
 logger = logging.getLogger("engine.importers.yaml_importer")
-
-agent = EngineeringOrchestrator(event_bus=get_event_bus())
 
 ASSEMBLY_KEYS = {"roller", "hopper", "frame"}
 INDUSTRIAL_KEYS = {"spindle", "drum", "compression_rollers"}
@@ -24,8 +18,7 @@ class InvalidMachineConfigError(ValueError):
 
 def _normalize(data: dict) -> dict:
     """
-    Translate a parsed YAML payload into the canonical machine config shape
-    consumed by EngineeringOrchestrator.run_machine_job.
+    Translate a parsed YAML payload into the canonical machine config shape.
 
     Accepted input shapes:
       1. Wrapped:        { machine: { name, ... } }
@@ -47,7 +40,6 @@ def _normalize(data: dict) -> dict:
         if "name" in data:
             machine["name"] = data["name"]
     else:
-        # Legacy flat roller schema.
         machine = {"roller": data}
 
     machine.setdefault("name", "machine")
@@ -60,7 +52,7 @@ def _validate(machine: dict) -> dict:
         validated = MachineConfig.from_normalized_dict(machine)
     except ValidationError as e:
         raise InvalidMachineConfigError(str(e)) from e
-    return validated.dict(exclude_none=True)
+    return validated.model_dump(exclude_none=True)
 
 
 def import_yaml(file_path: Path):
@@ -69,6 +61,10 @@ def import_yaml(file_path: Path):
     Raises InvalidMachineConfigError on malformed payloads so the ingestion
     layer can quarantine the file in workspace/failed/.
     """
+    # Lazy import avoids module-level side-effects (Redis connection, file I/O)
+    from app.core.orchestrator import EngineeringOrchestrator
+    from app.core.events import get_event_bus
+
     logger.info("Loading YAML: %s", file_path)
 
     try:
@@ -88,6 +84,7 @@ def import_yaml(file_path: Path):
 
     machine = _validate(machine)
 
-    result = agent.run_machine_job(machine.get('name'), machine)
+    agent = EngineeringOrchestrator(event_bus=get_event_bus())
+    result = agent.run_machine_job(machine.get("name", "machine"), machine)
     logger.info("Build result: %s", result)
     return result

@@ -1,9 +1,11 @@
-fastapi
-uvicorn
+fastapi>=0.136.3
+uvicorn[standard]
 python-socketio
 python-multipart
-pydantic
+pydantic>=2.9.0
 jinja2
 watchdog
 requests
-python-socketio
+redis[hiredis]
+rq
+pyyaml
