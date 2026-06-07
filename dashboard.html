@@ -9,7 +9,7 @@
 <body>
   <div class="top">
     <h1 class="title">OpenSCAD Engineering Platform</h1>
-    <div id="status-indicator" class="status-badge status-off status-indicator">OFFLINE</div>
+    <div id="status-indicator" class="status-badge status-off">OFFLINE</div>
     <div class="button-container">
       <button id="btn-test">Inject telemetry test</button>
     </div>
@@ -23,91 +23,116 @@
 
     <div class="card">
       <h2>Latest Evaluation Metrics</h2>
-      <div id="metrics-status" class="small">Waiting for evaluation events...</div>
-      <pre id="metrics-json" class="metrics-json"></pre>
       <div id="metric-grid" class="metric-grid">
-        <div>Score: <span id="score">n/a</span></div>
-        <div>Stability: <span id="stability">n/a</span></div>
-        <div>Efficiency: <span id="efficiency">n/a</span></div>
-        <div>Simplicity: <span id="simplicity">n/a</span></div>
+        <div>Score: <span id="score">n/a</span>%</div>
+        <div>Stability: <span id="stability">n/a</span>%</div>
+        <div>Efficiency: <span id="efficiency">n/a</span>%</div>
+        <div>Simplicity: <span id="simplicity">n/a</span>%</div>
       </div>
     </div>
 
     <div class="card">
+      <h2>Latest STL Preview</h2>
+      <div id="stl-preview-link">Waiting for CAD output...</div>
+      <div id="cad-preview"></div>
+    </div>
+
+    <div class="card">
       <h2>Upload Workspace File</h2>
-      <label class="form-label" for="upload-input">Choose workspace files</label>
+      <label class="form-label" for="upload-input">Select workspace files</label>
       <input id="upload-input" class="upload-input" title="Choose workspace files" type="file" multiple />
       <button id="btn-upload">Upload to Workspace</button>
       <div id="upload-status" class="upload-status small"></div>
     </div>
-
-    <div class="card">
-      <h2>Latest STL Preview</h2>
-      <div id="stl-preview" class="small">Waiting for CAD output...</div>
-      <div id="stl-preview-link"></div>
-    </div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  
   <script>
     (function () {
-      const logEl = document.getElementById('event-log');
-      const status = document.getElementById('status-indicator');
       const origin = window.location.origin;
+      const status = document.getElementById('status-indicator');
+      const logEl = document.getElementById('event-log');
 
-      function appendLog(channel, type, data) {
+      // 1. Initialize Universal Socket Bridge
+      const socket = io(origin);
+      
+      // 2. 3D Viewer Setup
+      const viewer = document.getElementById('cad-preview');
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, 300/300, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(300, 300);
+      viewer.appendChild(renderer.domElement);
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      camera.position.z = 5;
+      function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+      animate();
+
+      window.loadModel = (url) => {
+        new THREE.STLLoader().load(url, (geometry) => {
+          scene.clear();
+          const mesh = new THREE.Mesh(geometry, new THREE.MeshNormalMaterial());
+          scene.add(mesh);
+        });
+      };
+
+      // 3. Metric Resolver
+      function findMetric(obj, keys) {
+        if (!obj || typeof obj !== 'object') return undefined;
+        for (const key of keys) { if (obj[key] !== undefined) return obj[key]; }
+        for (const k in obj) {
+          const found = findMetric(obj[k], keys);
+          if (found !== undefined) return found;
+        }
+        return undefined;
+      }
+
+      // 4. Global Event Binding
+      socket.on('connect', () => { status.className = 'status-badge status-online'; status.textContent = 'ONLINE'; });
+      socket.on('disconnect', () => { status.className = 'status-badge status-off'; status.textContent = 'OFFLINE'; });
+      
+      socket.onAny((event, data) => {
         const ts = new Date().toLocaleTimeString();
-        const line = document.createElement('div');
-        line.className = 'log-entry';
-        line.innerHTML = `[${ts}] <b>${channel}</b> ${type}: ${JSON.stringify(data)}`;
-        logEl.appendChild(line);
+        logEl.innerHTML += `<div>[${ts}] <b>${event}</b></div>`;
         logEl.scrollTop = logEl.scrollHeight;
-      }
 
-      function getFeedbackValue(data, keys) {
-        const search = (obj, key) => {
-          if (!obj || typeof obj !== 'object') return undefined;
-          if (obj[key] !== undefined) return obj[key];
-          for (let k in obj) {
-            let res = search(obj[k], key);
-            if (res !== undefined) return res;
+        if (['evaluation_complete', 'score_update', 'result'].includes(event)) {
+          const map = {
+            'score': ['composite_score', 'score'],
+            'stability': ['structural_stability', 'structural_validity'],
+            'efficiency': ['material_efficiency', 'efficiency'],
+            'simplicity': ['manufacturing_simplicity', 'manufacturability']
+          };
+          for (const [id, keys] of Object.entries(map)) {
+            const val = findMetric(data, keys);
+            if (val !== undefined) document.getElementById(id).innerText = (typeof val === 'number' ? val.toFixed(2) : val);
           }
-          return undefined;
-        };
-        for (let key of keys) {
-          let val = search(data, key);
-          if (val !== undefined) return val;
         }
-        return 'n/a';
-      }
 
-      const optimizer = io(origin + '/optimizer');
-      const swarm = io(origin + '/swarm');
-      const cad = io(origin + '/cad');
-      const planner = io(origin + '/planner');
-
-      // Global socket handler for revision_promoted
-      swarm.on('revision_promoted', (data) => {
-        document.getElementById('score').innerText = getFeedbackValue(data, ['composite_score', 'score']) + '%';
-        document.getElementById('stability').innerText = getFeedbackValue(data, ['structural_stability', 'structural_validity']) + '%';
-        document.getElementById('efficiency').innerText = getFeedbackValue(data, ['material_efficiency']) + '%';
-        document.getElementById('simplicity').innerText = getFeedbackValue(data, ['manufacturing_simplicity', 'manufacturability']) + '%';
-        
-        const stlUrl = data.stl_url || (data.champion ? data.champion.stl_url : null);
-        if (stlUrl) {
-           document.getElementById('stl-preview-link').innerHTML = `<a href="${stlUrl}" target="_blank">View Model</a>`;
+        if (['stl_generated', 'revision_promoted', 'stl_ready'].includes(event)) {
+          const url = findMetric(data, ['stl_url', 'stl_path', 'url']);
+          if (url) {
+            document.getElementById('stl-preview-link').innerHTML = `<a href="${url}" target="_blank">Download STL</a>`;
+            window.loadModel(url);
+          }
         }
       });
 
-      // Attach logging to all
-      [optimizer, swarm, cad, planner].forEach(s => {
-        s.on('connect', () => { status.className = 'status-badge status-online'; status.textContent = 'ONLINE'; });
-        s.on('disconnect', () => { status.className = 'status-badge status-off'; status.textContent = 'OFFLINE'; });
-      });
-
-      // UI Handlers...
       document.getElementById('btn-test').addEventListener('click', () => fetch(origin + '/telemetry/test'));
-      document.getElementById('btn-upload').addEventListener('click', async () => { /* ... upload logic ... */ });
+      
+      document.getElementById('btn-upload').addEventListener('click', async () => {
+        const fileInput = document.getElementById('upload-input');
+        const formData = new FormData();
+        for (const file of fileInput.files) formData.append('files', file);
+        
+        const response = await fetch('/upload', { method: 'POST', body: formData });
+        const result = await response.json();
+        document.getElementById('upload-status').innerText = 'Upload successful: ' + JSON.stringify(result.files);
+      });
     })();
   </script>
 </body>
