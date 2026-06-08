@@ -9,3 +9,8 @@ requests
 redis[hiredis]
 rq
 pyyaml
+# Vision pipeline (optional — install for drawing ingestion)
+# pdfplumber
+# pytesseract
+# pdf2image
+# Pillow
