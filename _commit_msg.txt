@@ -1,0 +1,13 @@
+feat: new architecture - Machine Graph, Drawing Intelligence, Hemp Domain, Simulation
+
+Priority 1 - Engineering Drawing Intelligence Layer (app/vision/)
+Priority 2 - Machine Graph Architecture (app/graph/)
+Priority 3 - Universal YAML Compiler (graph/compiler.py)
+Priority 5 - Hemp Domain Intelligence (app/domain/hemp/)
+Priority 6 - Process Simulation / Digital Twin (app/simulation/)
+Knowledge Memory store (app/knowledge/)
+
+New API endpoints: /drawing/ingest, /graph/compile, /graph/decompile,
+/simulate, /evaluate/hemp, /knowledge/lessons, /knowledge/successful
+
+Tests: 113 -> 189 passing (76 new tests)
