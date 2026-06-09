@@ -463,8 +463,7 @@
 | v1.1.0 | Multi-Objective Optimization (NSGA-II) | ✅ Done |
 | v1.1.0 | Multi-Objective Optimization | ✅ Done |
 | v1.2.0 | Specialized Agent Ecosystem | ✅ Done |
-| v1.3.0 | Hardware Feedback Foundation | 🔲 Current |
-| v1.3.0 | Hardware Feedback Foundation | 🔲 |
+| v1.3.0 | Hardware Feedback Foundation | ✅ Done |
 | v2.0.0 | Autonomous Engineering Intelligence Platform | 🔲 |
 
 ---
@@ -474,13 +473,11 @@
 1. ~~No Redis Resilience~~ — ✅ Resolved (Task 3)
 2. ~~Blocking Event Emissions~~ — ✅ Resolved (Task 6)
 3. ~~Inconsistent Logging~~ — ✅ Resolved (Task 7)
-4. **Single-Parameter Mutation** — Only mutates parameters with failure signals
-5. **No Design Caching** — Duplicate designs are re-evaluated unnecessarily
-6. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)
-7. ~~**No Manufacturing Intelligence**~~ — ✅ Resolved (Phase 3 complete — 7 modules, 23 tests)
-8. ~~**No Engineering Director**~~ — ✅ Resolved (Phase 4 — 4 modules, 17 tests)
-9. **Director Uses Mock Physics/CAD** — Actual modules not yet wired into pipeline
-10. **Agents use config-based scoring** — Only Designer/Validator directly inspect config; others require physics/manufacturing results in config dict
+4. ~~**Single-Parameter Mutation**~~ — ✅ Resolved (Fix #4: exploration step perturbs non-signaled params at 30% rate)
+5. ~~**No Design Caching**~~ — ✅ Resolved (Fix #5: SHA-256 cache on evaluate_build() with LRU eviction at 1024)
+6. ~~**Director Uses Mock Physics/CAD**~~ — ✅ Resolved (Fix #9: ShaftAnalyzer, BearingAnalyzer, FrameAnalyzer, RotorAnalyzer, FatigueAnalyzer, VibrationAnalyzer; real CAD generation + BOM; real manufacturing analyzers)
+7. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)
+8. **Agents use config-based scoring** — Only Designer/Validator directly inspect config; others require physics/manufacturing results in config dict
 
 ---
 
@@ -488,9 +485,9 @@
 
 | Metric | Previous | Current | Target |
 | --- | --- | --- | --- |
-| Test Count | 267 | 299 | 400 |
-| Test Coverage | ~82% | ~84% | 85% |
-| Edge Cases | 16 | 16 | 25 |
+| Test Count | 299 | 357 | 400 |
+| Test Coverage | ~84% | ~88% | 85% |
+| Edge Cases | 16 | 20 | 25 |
 | Bounds Validation Layers | 3 | 3 | 3 |
 | Documentation | 95% | 95% | 100% |
 
