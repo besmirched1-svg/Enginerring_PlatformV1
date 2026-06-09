@@ -9,7 +9,7 @@
 <body>
   <div class="top">
     <h1 class="title">OpenSCAD Engineering Platform</h1>
-    <div id="status-indicator" class="status-badge status-off status-indicator">OFFLINE</div>
+    <div id="status-indicator" class="status-badge status-off">OFFLINE</div>
     <div class="button-container">
       <button id="btn-test">Inject telemetry test</button>
     </div>
@@ -23,172 +23,116 @@
 
     <div class="card">
       <h2>Latest Evaluation Metrics</h2>
-      <div id="metrics-status" class="small">Waiting for evaluation events...</div>
-      <pre id="metrics-json" class="metrics-json"></pre>
-    </div>
-
-    <div class="card">
-      <h2>Upload Workspace File</h2>
-      <label class="form-label" for="upload-input">Choose workspace files</label>
-      <input
-        id="upload-input"
-        class="upload-input"
-        title="Choose workspace files to upload"
-        placeholder="Select files to upload"
-        type="file"
-        multiple
-      />
-      <div class="spacer"></div>
-      <button id="btn-upload">Upload to Workspace</button>
-      <div id="upload-status" class="upload-status small"></div>
+      <div id="metric-grid" class="metric-grid">
+        <div>Score: <span id="score">n/a</span>%</div>
+        <div>Stability: <span id="stability">n/a</span>%</div>
+        <div>Efficiency: <span id="efficiency">n/a</span>%</div>
+        <div>Simplicity: <span id="simplicity">n/a</span>%</div>
+      </div>
     </div>
 
     <div class="card">
       <h2>Latest STL Preview</h2>
-      <div id="stl-preview" class="small">Waiting for CAD output...</div>
-      <div id="stl-preview-link"></div>
+      <div id="stl-preview-link">Waiting for CAD output...</div>
+      <div id="cad-preview"></div>
     </div>
 
     <div class="card">
-      <h3>Quick Info</h3>
-      <div class="small">Socket.IO namespaces: <code>/optimizer</code> <code>/swarm</code> <code>/cad</code> <code>/planner</code></div>
-      <div class="spacer"></div>
-      <div class="small">Open the console (F12) to see raw logs.</div>
+      <h2>Upload Workspace File</h2>
+      <label class="form-label" for="upload-input">Select workspace files</label>
+      <input id="upload-input" class="upload-input" title="Choose workspace files" type="file" multiple />
+      <button id="btn-upload">Upload to Workspace</button>
+      <div id="upload-status" class="upload-status small"></div>
     </div>
   </div>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  
   <script>
     (function () {
-      const logEl = document.getElementById('event-log');
-      const status = document.getElementById('status-indicator');
-
-      function appendLog(channel, type, data) {
-        const ts = new Date().toLocaleTimeString();
-        const line = document.createElement('div');
-        line.className = 'log-entry';
-        line.innerHTML =
-          '<span class="log-timestamp">[' + ts + ']</span> ' +
-          '<b class="log-channel">' + channel + '</b> ' +
-          '<span class="log-event">' + type + '</span> ' +
-          '<span class="log-data">' + (typeof data === 'object' ? JSON.stringify(data) : String(data)) + '</span>';
-        logEl.appendChild(line);
-        logEl.scrollTop = logEl.scrollHeight;
-      }
-
-      // Use current origin so it works on localhost:9000 or other host/port
       const origin = window.location.origin;
+      const status = document.getElementById('status-indicator');
+      const logEl = document.getElementById('event-log');
 
-      // Create socket.io connections
-      const optimizer = io(origin + '/optimizer');
-      const swarm = io(origin + '/swarm');
-      const cad = io(origin + '/cad');
-      const planner = io(origin + '/planner');
+      // 1. Initialize Universal Socket Bridge
+      const socket = io(origin);
+      
+      // 2. 3D Viewer Setup
+      const viewer = document.getElementById('cad-preview');
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(75, 300/300, 0.1, 1000);
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(300, 300);
+      viewer.appendChild(renderer.domElement);
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      camera.position.z = 5;
+      function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+      animate();
 
-      // Generic attach helper
-      function attach(socket, name, handlers) {
-        socket.on('connect', () => {
-          appendLog(name, 'connect', {});
-          status.className = 'status-badge status-online';
-          status.textContent = 'ONLINE';
-          console.log('[dashboard] connected');
+      window.loadModel = (url) => {
+        new THREE.STLLoader().load(url, (geometry) => {
+          scene.clear();
+          const mesh = new THREE.Mesh(geometry, new THREE.MeshNormalMaterial());
+          scene.add(mesh);
         });
-        socket.on('disconnect', () => {
-          appendLog(name, 'disconnect', {});
-          status.className = 'status-badge status-off';
-          status.textContent = 'OFFLINE';
-          console.log('[dashboard] disconnected');
-        });
-        for (const ev of handlers) {
-          socket.on(ev, (d) => {
-            appendLog(name, ev, d);
-            console.log(name, ev, d);
-          });
+      };
+
+      // 3. Metric Resolver
+      function findMetric(obj, keys) {
+        if (!obj || typeof obj !== 'object') return undefined;
+        for (const key of keys) { if (obj[key] !== undefined) return obj[key]; }
+        for (const k in obj) {
+          const found = findMetric(obj[k], keys);
+          if (found !== undefined) return found;
         }
+        return undefined;
       }
 
-      attach(optimizer, 'optimizer', ['mutation', 'score_update']);
-      attach(swarm, 'swarm', ['agent_message']);
-      attach(cad, 'cad', ['stl_ready']);
-      attach(planner, 'planner', ['reasoning_step']);
+      // 4. Global Event Binding
+      socket.on('connect', () => { status.className = 'status-badge status-online'; status.textContent = 'ONLINE'; });
+      socket.on('disconnect', () => { status.className = 'status-badge status-off'; status.textContent = 'OFFLINE'; });
+      
+      socket.onAny((event, data) => {
+        const ts = new Date().toLocaleTimeString();
+        logEl.innerHTML += `<div>[${ts}] <b>${event}</b></div>`;
+        logEl.scrollTop = logEl.scrollHeight;
 
-      const metricsStatus = document.getElementById('metrics-status');
-      const metricsJson = document.getElementById('metrics-json');
-      const stlPreview = document.getElementById('stl-preview');
-      const stlPreviewLink = document.getElementById('stl-preview-link');
-
-      function renderMetrics(payload) {
-        const score = payload?.score ?? payload?.composite_score ?? payload?.evaluation?.score ?? 'n/a';
-        const valid = payload?.valid;
-        const revision = payload?.id ?? payload?.revision_id ?? payload?.generation ?? 'unknown';
-        metricsStatus.textContent = `Latest evaluation: score=${score} valid=${valid ?? 'unknown'} revision=${revision}`;
-        metricsJson.textContent = JSON.stringify(payload, null, 2);
-      }
-
-      optimizer.on('score_update', (d) => {
-        renderMetrics(d);
-      });
-
-      cad.on('stl_ready', (d) => {
-        if (d && d.stl_url) {
-          stlPreview.textContent = 'STL ready. Open or download below:';
-          stlPreviewLink.innerHTML = `<a href="${d.stl_url}" target="_blank" rel="noreferrer" class="preview-link">${d.stl_url}</a>`;
-        } else {
-          stlPreview.textContent = 'STL event received, but no preview URL was provided.';
-          stlPreviewLink.textContent = '';
-        }
-      });
-
-      // Test button triggers backend test endpoint
-      document.getElementById('btn-test').addEventListener('click', () => {
-        fetch(origin + '/telemetry/test')
-          .then(r => r.json())
-          .then(j => {
-            appendLog('ui', 'test_sent', j);
-            console.log('telemetry test response', j);
-          })
-          .catch(err => {
-            appendLog('ui', 'test_error', String(err));
-            console.error(err);
-          });
-      });
-
-      document.getElementById('btn-upload').addEventListener('click', async () => {
-        const input = document.getElementById('upload-input');
-        const status = document.getElementById('upload-status');
-        const files = input.files;
-        if (!files || files.length === 0) {
-          appendLog('ui', 'upload_error', 'No files selected');
-          status.textContent = 'Please select one or more files to upload.';
-          return;
-        }
-
-        const form = new FormData();
-        for (const file of files) {
-          form.append('files', file);
-        }
-
-        status.textContent = 'Uploading...';
-        try {
-          const response = await fetch(origin + '/upload', {
-            method: 'POST',
-            body: form
-          });
-          const payload = await response.json();
-          if (!response.ok) {
-            throw new Error(payload.detail || response.statusText);
+        if (['evaluation_complete', 'score_update', 'result'].includes(event)) {
+          const map = {
+            'score': ['composite_score', 'score'],
+            'stability': ['structural_stability', 'structural_validity'],
+            'efficiency': ['material_efficiency', 'efficiency'],
+            'simplicity': ['manufacturing_simplicity', 'manufacturability']
+          };
+          for (const [id, keys] of Object.entries(map)) {
+            const val = findMetric(data, keys);
+            if (val !== undefined) document.getElementById(id).innerText = (typeof val === 'number' ? val.toFixed(2) : val);
           }
-          appendLog('ui', 'upload_success', payload);
-          status.textContent = `Uploaded ${payload.files.length} file(s) to workspace.`;
-        } catch (err) {
-          appendLog('ui', 'upload_error', String(err));
-          status.textContent = 'Upload failed; see console for details.';
+        }
+
+        if (['stl_generated', 'revision_promoted', 'stl_ready'].includes(event)) {
+          const url = findMetric(data, ['stl_url', 'stl_path', 'url']);
+          if (url) {
+            document.getElementById('stl-preview-link').innerHTML = `<a href="${url}" target="_blank">Download STL</a>`;
+            window.loadModel(url);
+          }
         }
       });
 
-      // Expose for debugging
-      window.__dashboard = { optimizer, swarm, cad, planner };
-      console.log('[dashboard] Socket.IO telemetry client initialized');
+      document.getElementById('btn-test').addEventListener('click', () => fetch(origin + '/telemetry/test'));
+      
+      document.getElementById('btn-upload').addEventListener('click', async () => {
+        const fileInput = document.getElementById('upload-input');
+        const formData = new FormData();
+        for (const file of fileInput.files) formData.append('files', file);
+        
+        const response = await fetch('/upload', { method: 'POST', body: formData });
+        const result = await response.json();
+        document.getElementById('upload-status').innerText = 'Upload successful: ' + JSON.stringify(result.files);
+      });
     })();
   </script>
 </body>

@@ -157,3 +157,217 @@ subprocess.CalledProcessError: Command '['openscad', '-o', 'C:\\Users\\chodk\\op
 2026-05-26 15:01:45,942 INFO app.bom.generator: BOM spreadsheet saved to outputs\BOM\HTDS_P2-CRITICAL-ERR-REV-C_bom.csv (total=8000.0 kg, AUD $106535.00)
 2026-05-26 15:01:45,946 INFO app.core.dashboard: Live HTML control dashboard generated successfully at: outputs\index.html
 2026-05-26 15:01:45,953 INFO app.workspace.ingestion: Moved to processing: htds_p2_danger.md
+2026-06-06 20:07:47,526 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-06 20:07:47,533 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-06 20:07:47,533 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-06 20:07:47,533 INFO engine.workspace.watcher: Polling watcher started
+2026-06-06 20:10:33,359 INFO engine.events: RedisEventBus connected at redis://127.0.0.1:6379
+2026-06-06 20:10:33,359 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-06 20:10:33,361 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-06 20:10:33,365 INFO engine.workspace.watcher: Polling watcher started
+2026-06-06 20:10:58,197 INFO engine.workspace.watcher: File created: workspace\uploads\machine_config.yaml
+2026-06-06 20:10:58,197 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\machine_config.yaml
+2026-06-06 20:10:58,197 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\machine_config.yaml
+2026-06-06 20:10:58,197 INFO engine.importers.yaml_importer: Parsed YAML: {'name': 'hemp_decorticator_v1', 'roller': {'length': 150, 'radius': 50}, 'hopper': {'capacity': 200}, 'frame': {'material': 'structural_steel'}}
+2026-06-06 20:10:58,197 INFO engine.importers.yaml_importer: Normalized machine 'hemp_decorticator_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-06 20:10:58,197 ERROR engine.workspace.ingestion: Failed ingesting: workspace\uploads\machine_config.yaml
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\workspace\ingestion.py", line 88, in ingest_file
+    import_yaml(file_path)
+  File "C:\Users\chodk\openscad-engineering-platform\app\importers\yaml_importer.py", line 91, in import_yaml
+    result = agent.generate_machine(machine)
+             ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'EngineeringOrchestrator' object has no attribute 'generate_machine'
+2026-06-06 20:13:19,481 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-06 20:13:19,481 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-06 20:13:19,489 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-06 20:13:19,495 INFO engine.workspace.watcher: Polling watcher started
+2026-06-06 20:15:46,718 INFO engine.workspace.watcher: Stopping watcher
+2026-06-06 20:15:50,494 INFO engine.events: RedisEventBus connected at redis://127.0.0.1:6379
+2026-06-06 20:15:50,495 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-06 20:15:50,496 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-06 20:15:50,498 INFO engine.workspace.watcher: Polling watcher started
+2026-06-06 20:16:04,867 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-06 20:16:04,867 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-06 20:16:04,867 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-06 20:16:04,874 INFO engine.workspace.watcher: Polling watcher started
+2026-06-06 20:22:05,807 INFO engine.workspace.watcher: File created: workspace\uploads\machine_config.yaml
+2026-06-06 20:22:05,807 INFO engine.workspace.watcher: File created: workspace\uploads\machine_config.yaml
+2026-06-06 20:22:05,808 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\machine_config.yaml
+2026-06-06 20:22:05,808 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\machine_config.yaml
+2026-06-06 20:22:05,811 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\machine_config.yaml
+2026-06-06 20:22:05,811 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\machine_config.yaml
+2026-06-06 20:22:05,814 INFO engine.importers.yaml_importer: Parsed YAML: {'name': 'hemp_decorticator_v1', 'roller': {'length': 150, 'radius': 50}, 'hopper': {'capacity': 200}, 'frame': {'material': 'structural_steel'}}
+2026-06-06 20:22:05,815 INFO engine.importers.yaml_importer: Normalized machine 'hemp_decorticator_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-06 20:22:05,815 INFO engine.importers.yaml_importer: Parsed YAML: {'name': 'hemp_decorticator_v1', 'roller': {'length': 150, 'radius': 50}, 'hopper': {'capacity': 200}, 'frame': {'material': 'structural_steel'}}
+2026-06-06 20:22:05,816 INFO engine.importers.yaml_importer: Normalized machine 'hemp_decorticator_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-06 20:22:05,818 ERROR engine.workspace.ingestion: Failed ingesting: workspace\uploads\machine_config.yaml
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\workspace\ingestion.py", line 88, in ingest_file
+    import_yaml(file_path)
+  File "C:\Users\chodk\openscad-engineering-platform\app\importers\yaml_importer.py", line 91, in import_yaml
+    result = agent.run_machine_job(machine)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: EngineeringOrchestrator.run_machine_job() missing 1 required positional argument: 'config'
+2026-06-06 20:22:13,443 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-06 20:22:13,443 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-06 20:22:13,447 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-06 20:22:13,451 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 07:44:13,836 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 07:44:13,836 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 07:44:13,841 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 07:44:13,843 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 07:46:03,713 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 07:46:03,714 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 07:46:03,715 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 07:46:03,716 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 07:46:26,285 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 07:46:26,287 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 07:46:26,287 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 07:46:26,287 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 07:58:23,495 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 07:58:26,913 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 07:58:26,913 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 07:58:26,913 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 07:58:26,913 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 07:58:52,088 INFO engine.workspace.watcher: File created: workspace\uploads\machine_config.yaml
+2026-06-07 07:58:52,088 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\machine_config.yaml
+2026-06-07 07:58:52,088 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\machine_config.yaml
+2026-06-07 07:58:52,108 INFO engine.importers.yaml_importer: Parsed YAML: {'name': 'hemp_decorticator_v1', 'roller': {'length': 150, 'radius': 50}, 'hopper': {'capacity': 200}, 'frame': {'material': 'structural_steel'}}
+2026-06-07 07:58:52,108 INFO engine.importers.yaml_importer: Normalized machine 'hemp_decorticator_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 07:58:52,109 ERROR engine.workspace.ingestion: Failed ingesting: workspace\uploads\machine_config.yaml
+Traceback (most recent call last):
+  File "C:\Users\chodk\openscad-engineering-platform\app\workspace\ingestion.py", line 88, in ingest_file
+    import_yaml(file_path)
+  File "C:\Users\chodk\openscad-engineering-platform\app\importers\yaml_importer.py", line 91, in import_yaml
+    result = agent.run_machine_job(machine)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: EngineeringOrchestrator.run_machine_job() missing 1 required positional argument: 'config'
+2026-06-07 08:00:53,592 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 08:01:15,512 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 08:01:15,512 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 08:01:15,512 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 08:01:15,512 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 08:01:28,596 INFO engine.workspace.watcher: File created: workspace\uploads\machine_config.yaml
+2026-06-07 08:01:28,596 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\machine_config.yaml
+2026-06-07 08:01:28,596 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\machine_config.yaml
+2026-06-07 08:01:28,596 INFO engine.importers.yaml_importer: Parsed YAML: {'name': 'hemp_decorticator_v1', 'roller': {'length': 150, 'radius': 50}, 'hopper': {'capacity': 200}, 'frame': {'material': 'structural_steel'}}
+2026-06-07 08:01:28,596 INFO engine.importers.yaml_importer: Normalized machine 'hemp_decorticator_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 08:01:28,596 INFO engine.orchestrator: Running container compilation pipeline for hemp_decorticator_v1 [rev_4ee67909]
+2026-06-07 08:01:29,657 INFO engine.revisions: Saved manifest record to: outputs/revisions\hemp_decorticator_v1\rev_4ee67909\manifest.json
+2026-06-07 08:01:29,666 INFO engine.promotion: Atomically promoted hemp_decorticator_v1 champion pointer to rev_4ee67909 with score 0.925.
+2026-06-07 08:01:29,676 INFO engine.lineage: Evolutionary path logged securely inside structural database registry: outputs/revisions/lineage_history.json
+2026-06-07 08:01:29,732 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_4ee67909', 'directory': 'outputs\\revisions\\hemp_decorticator_v1\\rev_4ee67909', 'score': 0.925, 'evaluation': {'composite': 0.925, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 0.5, 'issues': ['No BOM mass to evaluate']}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': ['No BOM mass to evaluate']}, 'promoted': True, 'parent_info': None}
+2026-06-07 08:01:29,734 INFO engine.workspace.ingestion: Moved to processing: machine_config.yaml
+2026-06-07 09:39:11,322 INFO engine.workspace.watcher: File created: workspace\uploads\test_template.scad
+2026-06-07 09:39:11,333 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\test_template.scad
+2026-06-07 09:39:11,364 WARNING engine.workspace.ingestion: Unsupported file type .scad (supported: ['.yaml', '.yml']); quarantining test_template.scad
+2026-06-07 10:31:21,138 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 14:35:09,112 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 14:35:09,112 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 14:35:09,112 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 14:35:09,112 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 14:37:33,603 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 14:37:33,603 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 14:37:33,605 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 14:37:33,605 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 14:39:55,158 INFO engine.workspace.watcher: File created: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:39:55,159 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:39:55,169 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:39:55,170 INFO engine.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-06-07 14:39:55,170 INFO engine.importers.yaml_importer: Normalized machine 'compression_line_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 14:39:55,171 INFO engine.orchestrator: Running container compilation pipeline for compression_line_v1 [rev_65237b75]
+2026-06-07 14:39:55,640 INFO engine.workspace.watcher: File created: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:39:55,641 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:39:55,641 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:39:55,641 INFO engine.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-06-07 14:39:55,641 INFO engine.importers.yaml_importer: Normalized machine 'compression_line_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 14:39:55,641 INFO engine.orchestrator: Running container compilation pipeline for compression_line_v1 [rev_d50592bd]
+2026-06-07 14:39:56,179 INFO engine.revisions: Saved manifest record to: outputs/revisions\compression_line_v1\rev_65237b75\manifest.json
+2026-06-07 14:39:56,179 INFO engine.promotion: Atomically promoted compression_line_v1 champion pointer to rev_65237b75 with score 0.925.
+2026-06-07 14:39:56,202 INFO engine.lineage: Evolutionary path logged securely inside structural database registry: outputs/revisions/lineage_history.json
+2026-06-07 14:39:56,241 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_65237b75', 'directory': 'outputs\\revisions\\compression_line_v1\\rev_65237b75', 'score': 0.925, 'evaluation': {'composite': 0.925, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 0.5, 'issues': ['No BOM mass to evaluate']}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': ['No BOM mass to evaluate']}, 'promoted': True, 'parent_info': None}
+2026-06-07 14:39:56,241 INFO engine.workspace.ingestion: Moved to processing: example_machine_test.yaml
+2026-06-07 14:39:56,666 INFO engine.revisions: Saved manifest record to: outputs/revisions\compression_line_v1\rev_d50592bd\manifest.json
+2026-06-07 14:39:56,675 INFO engine.promotion: Atomically promoted compression_line_v1 champion pointer to rev_d50592bd with score 0.925.
+2026-06-07 14:39:56,704 INFO engine.lineage: Evolutionary path logged securely inside structural database registry: outputs/revisions/lineage_history.json
+2026-06-07 14:39:56,712 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_d50592bd', 'directory': 'outputs\\revisions\\compression_line_v1\\rev_d50592bd', 'score': 0.925, 'evaluation': {'composite': 0.925, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 0.5, 'issues': ['No BOM mass to evaluate']}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': ['No BOM mass to evaluate']}, 'promoted': True, 'parent_info': None}
+2026-06-07 14:39:56,713 WARNING engine.workspace.ingestion: Source vanished during move: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:38,940 INFO engine.workspace.watcher: File created: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:38,940 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:38,941 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:38,943 INFO engine.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-06-07 14:40:38,943 INFO engine.importers.yaml_importer: Normalized machine 'compression_line_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 14:40:38,943 INFO engine.orchestrator: Running container compilation pipeline for compression_line_v1 [rev_f4c45e6a]
+2026-06-07 14:40:39,539 INFO engine.workspace.watcher: File created: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:39,539 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:39,539 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:40:39,539 INFO engine.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-06-07 14:40:39,539 INFO engine.importers.yaml_importer: Normalized machine 'compression_line_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 14:40:39,539 INFO engine.orchestrator: Running container compilation pipeline for compression_line_v1 [rev_a6cebfc6]
+2026-06-07 14:40:39,806 INFO engine.revisions: Saved manifest record to: outputs/revisions\compression_line_v1\rev_f4c45e6a\manifest.json
+2026-06-07 14:40:39,806 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_f4c45e6a', 'directory': 'outputs\\revisions\\compression_line_v1\\rev_f4c45e6a', 'score': 0.925, 'evaluation': {'composite': 0.925, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 0.5, 'issues': ['No BOM mass to evaluate']}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': ['No BOM mass to evaluate']}, 'promoted': False, 'parent_info': None}
+2026-06-07 14:40:39,806 INFO engine.workspace.ingestion: Moved to processing: example_machine_test__20260607_044039.yaml
+2026-06-07 14:40:40,401 INFO engine.revisions: Saved manifest record to: outputs/revisions\compression_line_v1\rev_a6cebfc6\manifest.json
+2026-06-07 14:40:40,401 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_a6cebfc6', 'directory': 'outputs\\revisions\\compression_line_v1\\rev_a6cebfc6', 'score': 0.925, 'evaluation': {'composite': 0.925, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 0.5, 'issues': ['No BOM mass to evaluate']}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': ['No BOM mass to evaluate']}, 'promoted': False, 'parent_info': None}
+2026-06-07 14:40:40,401 WARNING engine.workspace.ingestion: Source vanished during move: workspace\uploads\example_machine_test.yaml
+2026-06-07 14:53:19,205 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 14:53:19,207 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 14:53:19,207 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 14:53:19,209 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 14:53:46,466 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 14:53:51,449 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 14:54:17,960 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 14:54:30,824 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 14:54:30,824 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 14:54:30,825 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 14:54:30,827 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 14:59:00,076 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 14:59:03,242 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 14:59:03,242 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 14:59:03,242 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 14:59:03,242 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 15:01:38,282 INFO engine.workspace.watcher: File created: workspace\uploads\example_machine_test.yaml
+2026-06-07 15:01:38,282 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\example_machine_test.yaml
+2026-06-07 15:01:38,284 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine_test.yaml
+2026-06-07 15:01:38,287 INFO engine.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-06-07 15:01:38,287 INFO engine.importers.yaml_importer: Normalized machine 'compression_line_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 15:01:38,289 INFO engine.orchestrator: Running container compilation pipeline for compression_line_v1 [rev_ea185e13]
+2026-06-07 15:01:38,291 INFO engine.orchestrator: CONFIG RECEIVED: {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40, 'material': 'mild_steel'}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}
+2026-06-07 15:01:38,291 INFO engine.orchestrator: CONFIG RECEIVED: {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40, 'material': 'mild_steel'}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}
+2026-06-07 15:01:38,291 INFO engine.orchestrator: CONFIG RECEIVED: {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40, 'material': 'mild_steel'}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}
+2026-06-07 15:01:39,118 INFO engine.bom.generator: Generating manufacturing Bill of Materials spreadsheet...
+2026-06-07 15:01:39,119 INFO engine.bom.generator: BOM spreadsheet saved to outputs\BOM\assembly_bom.csv (parts=3, total=362.8 kg, AUD 1714.15)
+2026-06-07 15:01:39,119 INFO engine.orchestrator: Generated BOM outputs\BOM\assembly_bom.csv (mass 362.83 kg)
+2026-06-07 15:01:39,121 INFO engine.revisions: Saved manifest record to: outputs/revisions\compression_line_v1\rev_ea185e13\manifest.json
+2026-06-07 15:01:39,121 INFO engine.promotion: Atomically promoted compression_line_v1 champion pointer to rev_ea185e13 with score 1.0.
+2026-06-07 15:01:39,147 INFO engine.lineage: Evolutionary path logged securely inside structural database registry: outputs/revisions/lineage_history.json
+2026-06-07 15:01:39,150 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_ea185e13', 'directory': 'outputs\\revisions\\compression_line_v1\\rev_ea185e13', 'score': 1.0, 'evaluation': {'composite': 1.0, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 1.0, 'issues': []}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': []}, 'promoted': True, 'parent_info': None}
+2026-06-07 15:01:39,150 INFO engine.workspace.ingestion: Moved to processing: example_machine_test__20260607_050139.yaml
+2026-06-07 15:01:53,422 INFO engine.workspace.watcher: File created: workspace\uploads\example_machine_test.yaml
+2026-06-07 15:01:53,422 INFO engine.workspace.ingestion: Ingesting file: workspace\uploads\example_machine_test.yaml
+2026-06-07 15:01:53,422 INFO engine.importers.yaml_importer: Loading YAML: workspace\uploads\example_machine_test.yaml
+2026-06-07 15:01:53,422 INFO engine.importers.yaml_importer: Parsed YAML: {'machine': {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}}
+2026-06-07 15:01:53,422 INFO engine.importers.yaml_importer: Normalized machine 'compression_line_v1' (subsystems: ['frame', 'hopper', 'roller'])
+2026-06-07 15:01:53,422 INFO engine.orchestrator: Running container compilation pipeline for compression_line_v1 [rev_20baf4fb]
+2026-06-07 15:01:53,422 INFO engine.orchestrator: CONFIG RECEIVED: {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40, 'material': 'mild_steel'}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}
+2026-06-07 15:01:53,422 INFO engine.orchestrator: CONFIG RECEIVED: {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40, 'material': 'mild_steel'}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}
+2026-06-07 15:01:53,422 INFO engine.orchestrator: CONFIG RECEIVED: {'name': 'compression_line_v1', 'frame': {'length': 1400, 'width': 700, 'height': 900, 'profile': 40, 'material': 'mild_steel'}, 'roller': {'diameter': 240, 'width': 700, 'shaft': 50, 'material': 'stainless_316'}, 'hopper': {'top_width': 500, 'bottom_width': 150, 'height': 350, 'wall': 4, 'material': 'stainless_304'}}
+2026-06-07 15:01:54,265 INFO engine.bom.generator: Generating manufacturing Bill of Materials spreadsheet...
+2026-06-07 15:01:54,266 INFO engine.bom.generator: BOM spreadsheet saved to outputs\BOM\assembly_bom.csv (parts=3, total=362.8 kg, AUD 1714.15)
+2026-06-07 15:01:54,267 INFO engine.orchestrator: Generated BOM outputs\BOM\assembly_bom.csv (mass 362.83 kg)
+2026-06-07 15:01:54,268 INFO engine.revisions: Saved manifest record to: outputs/revisions\compression_line_v1\rev_20baf4fb\manifest.json
+2026-06-07 15:01:54,269 INFO engine.promotion: Atomically promoted compression_line_v1 champion pointer to rev_20baf4fb with score 1.0.
+2026-06-07 15:01:54,286 INFO engine.lineage: Evolutionary path logged securely inside structural database registry: outputs/revisions/lineage_history.json
+2026-06-07 15:01:54,288 INFO engine.importers.yaml_importer: Build result: {'revision_id': 'rev_20baf4fb', 'directory': 'outputs\\revisions\\compression_line_v1\\rev_20baf4fb', 'score': 1.0, 'evaluation': {'composite': 1.0, 'needs_improvement': False, 'metrics': {'structural_validity': {'score': 1.0, 'issues': []}, 'manufacturability': {'score': 1.0, 'issues': []}, 'material_efficiency': {'score': 1.0, 'issues': []}, 'performance_heuristics': {'score': 1.0, 'issues': []}, 'failure_risk': {'score': 1.0, 'issues': []}, 'constraint_compliance': {'score': 1.0, 'issues': []}}, 'all_issues': []}, 'promoted': True, 'parent_info': None}
+2026-06-07 15:01:54,289 INFO engine.workspace.ingestion: Moved to processing: example_machine_test__20260607_050154.yaml
+2026-06-07 15:06:33,600 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 15:06:39,770 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 15:06:39,770 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 15:06:39,772 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 15:06:39,772 INFO engine.workspace.watcher: Polling watcher started
+2026-06-07 15:30:51,279 INFO engine.workspace.watcher: Stopping watcher
+2026-06-07 15:30:57,058 INFO engine.events: REDIS_URL not set; using NullEventBus (events are no-op)
+2026-06-07 15:30:57,060 INFO engine.workspace.watcher: Initializing polling watcher...
+2026-06-07 15:30:57,060 INFO engine.workspace.watcher: Watching directory: C:\Users\chodk\openscad-engineering-platform\workspace\uploads
+2026-06-07 15:30:57,060 INFO engine.workspace.watcher: Polling watcher started

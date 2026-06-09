@@ -1,10 +1,10 @@
 ﻿import re
 import logging
 from pathlib import Path
-from app.core.orchestrator import EngineeringAgent
+from app.core.orchestrator import EngineeringOrchestrator
 
 logger = logging.getLogger("engine.importers.dxf_importer")
-agent = EngineeringAgent()
+agent = EngineeringOrchestrator()
 
 def import_dxf(file_path: Path):
     """

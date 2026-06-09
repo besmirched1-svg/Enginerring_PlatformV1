@@ -159,6 +159,8 @@ class MultiAgentSwarm:
         return population
 
     def _serialize_feedback(self, feedback: Any) -> Dict[str, Any]:
+        if hasattr(feedback, "model_dump"):
+            return feedback.model_dump()
         if hasattr(feedback, "dict"):
             return feedback.dict()
         if isinstance(feedback, dict):

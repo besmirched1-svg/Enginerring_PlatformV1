@@ -9,6 +9,7 @@ RUN apt-get update && \
         build-essential \
         libgl1 \
         libglu1-mesa \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

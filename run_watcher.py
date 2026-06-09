@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 # Wire the root logger up front, before any app modules are imported, so that
-# import-time log calls (e.g. EngineeringAgent loading state) reach the file.
+# import-time log calls (e.g. EngineeringOrchestrator loading state) reach the file.
 # logging.basicConfig() silently no-ops when handlers already exist on the
 # root logger — explicit addHandler() guarantees the file sink is attached
 # regardless of what else has touched logging by the time we run.

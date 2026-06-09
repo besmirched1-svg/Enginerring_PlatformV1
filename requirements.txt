@@ -1,5 +1,16 @@
-﻿fastapi>=0.100.0
-uvicorn>=0.22.0
-redis>=4.6.0
-pydantic>=2.0.0
-requests==2.31.0
+fastapi>=0.136.3
+uvicorn[standard]
+python-socketio
+python-multipart
+pydantic>=2.9.0
+jinja2
+watchdog
+requests
+redis[hiredis]
+rq
+pyyaml
+# Vision pipeline (optional — install for drawing ingestion)
+# pdfplumber
+# pytesseract
+# pdf2image
+# Pillow

@@ -1,0 +1,37 @@
+﻿<script>
+// Improved Metric Resolver
+window.getFeedbackValue = (data, keys) => {
+    // Traverse the payload to find the first matching key
+    const search = (obj, key) => {
+        if (!obj || typeof obj !== 'object') return undefined;
+        if (obj[key] !== undefined) return obj[key];
+        for (let k in obj) {
+            let res = search(obj[k], key);
+            if (res !== undefined) return res;
+        }
+        return undefined;
+    };
+    
+    for (let key of keys) {
+        let val = search(data, key);
+        if (val !== undefined) return val;
+    }
+    return 'n/a';
+};
+
+// WebSocket Event Listener Patch
+socket.on('revision_promoted', (data) => {
+    console.debug('DEBUG_PAYLOAD', data); // Check console for structure
+    document.getElementById('score').innerText = getFeedbackValue(data, ['composite_score', 'score']) + '%';
+    document.getElementById('stability').innerText = getFeedbackValue(data, ['structural_stability', 'structural_validity']) + '%';
+    document.getElementById('efficiency').innerText = getFeedbackValue(data, ['material_efficiency']) + '%';
+    document.getElementById('simplicity').innerText = getFeedbackValue(data, ['manufacturing_simplicity', 'manufacturability']) + '%';
+
+    // STL Loader
+    const stlUrl = data.stl_url || (data.champion ? data.champion.stl_url : null);
+    if (stlUrl) {
+        console.log('Loading STL from:', stlUrl);
+        window.loadModel(stlUrl);
+    }
+});
+</script>

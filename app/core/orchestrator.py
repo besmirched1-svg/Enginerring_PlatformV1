@@ -2,8 +2,15 @@ import os
 import uuid
 import logging
 import subprocess
+from pathlib import Path
+from app.cad.renderer import render_stl
 from typing import Any, Dict, Optional
-from app.core.evaluation import evaluate_build
+from app.core.evaluation import (
+    evaluate_build,
+    total_mass_from_bom_rows,
+)
+
+from app.bom.generator import generate_bom
 from app.core.revisions import archive_revision, update_promotion_status
 from app.core.promotion import get_current_champion, should_promote, set_new_champion
 from app.core.lineage import log_design_evolution
@@ -63,7 +70,8 @@ class EngineeringOrchestrator:
         attempt_in_chain: int = 0
     ) -> Dict[str, Any]:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
-        logger.info(f"Running container compilation pipeline for {machine_name} [{revision_id}]")
+        logger.info("Running build pipeline for %s [%s]", machine_name, revision_id)
+        logger.info("Config received: %s", config)
         
         champion = get_current_champion(machine_name)
         old_rev = champion.get("revision", "v0")
@@ -84,20 +92,99 @@ class EngineeringOrchestrator:
         self._emit_event("scad_generated", {"machine_name": machine_name, "revision_id": revision_id, "scad_path": scad_path})
 
         try:
-            subprocess.run(["openscad", "-o", stl_path, scad_path], capture_output=True, timeout=10.0, check=True)
-            self._emit_event("stl_generated", {
-                "machine_name": machine_name,
-                "revision_id": revision_id,
-                "stl_path": stl_path,
-                "stl_url": self._make_stl_url(machine_name, revision_id),
-            })
+            render_result = render_stl(Path(scad_path))
+
+            stl_path = render_result["stl"]
+            png_path = render_result["png"]
+
+            self._emit_event(
+                "stl_generated",
+                {
+                    "machine_name": machine_name,
+                    "revision_id": revision_id,
+                    "stl_path": stl_path,
+                    "png_path": png_path,
+                    "stl_url": self._make_stl_url(machine_name, revision_id),
+                },
+            )
+
         except Exception as e:
-            logger.error(f"OpenSCAD execution failure, substituting fallback STL mesh: {str(e)}")
-            self._emit_event("build_failed", {"machine_name": machine_name, "revision_id": revision_id, "error": str(e)})
-            with open(stl_path, 'w', encoding='utf-8') as f:
+            logger.error(
+                f"OpenSCAD execution failure, substituting fallback STL mesh: {e}"
+            )
+
+            self._emit_event(
+                "build_failed",
+                {
+                    "machine_name": machine_name,
+                    "revision_id": revision_id,
+                    "error": str(e),
+                },
+            )
+
+            with open(stl_path, "w", encoding="utf-8") as f:
                 f.write("FALLBACK STL")
 
-        evaluation_result = evaluate_build(config, None)
+        # -------------------------------------------------
+        # Generate BOM from detected subsystems
+        # -------------------------------------------------
+
+        bom_parts = []
+
+        if config.get("frame"):
+            bom_parts.append({
+                "part": "Frame",
+                "config": config["frame"],
+            })
+
+        if config.get("roller"):
+            bom_parts.append({
+                "part": "Roller",
+                "config": config["roller"],
+            })
+
+        if config.get("hopper"):
+            bom_parts.append({
+                "part": "Hopper",
+                "config": config["hopper"],
+            })
+
+        if config.get("spindle"):
+            bom_parts.append({
+                "part": "Spindle",
+                "config": config["spindle"],
+            })
+
+        if config.get("drum"):
+            bom_parts.append({
+                "part": "Drum",
+                "config": config["drum"],
+            })
+
+        if config.get("compression_rollers"):
+            bom_parts.append({
+                "part": "CompressionRoller",
+                "config": config["compression_rollers"],
+            })
+
+        bom_data = {
+            "parts": bom_parts
+        }
+
+        bom_csv = generate_bom(bom_data)
+
+        total_mass = total_mass_from_bom_rows(bom_parts)
+
+        logger.info(
+            "Generated BOM %s (mass %.2f kg)",
+            bom_csv,
+            total_mass,
+        )
+
+        evaluation_result = evaluate_build(
+            config,
+            total_mass,
+        )
         archive_revision(machine_name, revision_id, config, parent_info)
         evaluation_payload = {
             "machine_name": machine_name,
@@ -130,7 +217,7 @@ class EngineeringOrchestrator:
                     pass
                 log_design_evolution(machine_name, old_rev, revision_id, old_score, score, reason)
                 dispatch_cluster_alert(
-                    title=f"🏆 CHAMPION PROMOTED: {machine_name}",
+                    title=f"CHAMPION PROMOTED: {machine_name}",
                     text=f"Revision [{revision_id}] outscored baseline ({old_score:.2f} -> {score:.2f}).",
                     alert_level="SUCCESS"
                 )
@@ -151,3 +238,17 @@ class EngineeringOrchestrator:
             "promoted": promotion_triggered,
             "parent_info": parent_info,
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+

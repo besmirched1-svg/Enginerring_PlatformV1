@@ -1,0 +1,8 @@
+name: hemp_decorticator_v1
+roller:
+  length: 150
+  radius: 50
+hopper:
+  capacity: 200
+frame:
+  material: structural_steel

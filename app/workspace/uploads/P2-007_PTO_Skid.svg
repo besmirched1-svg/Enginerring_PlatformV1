@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg
+  PUBLIC '-//W3C//DTD SVG 1.0//EN'
+  'http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd'>
+<svg width="1000" height="350" preserveAspectRatio="xMinYMin meet" viewBox="0 0 1000 350" xmlns="http://www.w3.org/2000/svg" version="1.0" fill-rule="evenodd" xmlns:xlink="http://www.w3.org/1999/xlink">
+	<title>...</title>
+	<desc>...</desc>
+	<clipPath id="clip">
+		<rect x="0" y="0" width="1000" height="350"/>
+	</clipPath>
+	<g id="group" transform="scale(1,-1) translate(0,-350)" style="clip-path: url(#clip)">
+		<g transform="">
+			<rect x="100" y="100" width="760" height="160" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 2; fill: rgb(0%,0%,0%); fill-rule: evenodd;"/>
+			<path d="M 240,100 L 240,260 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1;"/>
+			<path d="M 380,100 L 380,260 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1;"/>
+			<path d="M 520,100 L 520,260 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1;"/>
+			<path d="M 660,100 L 660,260 Z" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 1;"/>
+			<circle cx="140" cy="310" r="15" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 2; fill: rgb(0%,0%,0%); fill-rule: evenodd;"/>
+			<circle cx="820" cy="310" r="15" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 2; fill: rgb(0%,0%,0%); fill-rule: evenodd;"/>
+			<circle cx="480" cy="340" r="15" style="stroke: rgb(0%,0%,0%); stroke-linecap: butt; stroke-width: 2; fill: rgb(0%,0%,0%); fill-rule: evenodd;"/>
+			<text x="360" y="50" style="font-family: Times-Roman; font-size: 10px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,100) scale(1,-1)">3900 mm Skid Length</text>
+			<text x="890" y="180" style="font-family: Times-Roman; font-size: 10px;fill: rgb(0%,0%,0%); stroke:none;" transform="translate(0,360) scale(1,-1)">2100 mm Width</text>
+		</g>
+	</g>
+</svg>

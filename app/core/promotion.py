@@ -24,6 +24,9 @@ def should_promote(challenger_score: float, champion_score: float) -> Tuple[bool
     if required_threshold > 1.0:
         required_threshold = 1.0
     
+    if champion_score >= 1.0:
+        return False, "Champion already has perfect score."
+
     if challenger_score >= required_threshold:
         return True, f"Challenger score ({challenger_score:.3f}) meets or exceeds promotion threshold ({required_threshold:.3f})."
     return False, f"Challenger score ({challenger_score:.3f}) failed to clear minimum target ({required_threshold:.3f})."
@@ -81,3 +84,5 @@ def set_new_champion(machine_name: str, revision_id: str, score: float) -> bool:
     except Exception as e:
         logger.error(f"Critical failure updating champion registry file pointer: {str(e)}")
         return False
+
+
