@@ -21,6 +21,9 @@ class FatigueMaterialProperties:
     fatigue_strength_exponent: float  # dimensionless (Basquin's b)
     fatigue_ductility_coefficient: float  # dimensionless (Coffin-Manson epsilon_f')
     fatigue_ductility_exponent: float  # dimensionless (Coffin-Manson c)
+    # Thermal properties
+    thermal_expansion: float = 12.0e-6  # 1/°C (default for steel)
+    reference_temperature: float = 20.0  # °C
     # For simplicity, we'll focus on high-cycle fatigue (elastic strain dominant)
 
 
@@ -31,6 +34,7 @@ class FatigueLoading:
     alternating_stress: float = 0.0  # MPa
     stress_ratio: float = -1.0    # R = sigma_min / sigma_max
     num_cycles: int = 0           # Number of applied cycles at this stress level
+    temperature_change: float = 0.0  # °C (change from reference temperature)
     # For variable amplitude loading, we'd have a list of these
 
 
@@ -56,7 +60,88 @@ class FatigueAnalyzer:
 
     def __init__(self, material: FatigueMaterialProperties):
         self.material = material
+        self._adjusted_sut: Optional[float] = None
+        self._adjusted_sy: Optional[float] = None
+        self._thermal_notes: List[str] = None
         logger.debug(f"Initialized FatigueAnalyzer with material properties")
+
+    def calculate_temperature_adjusted_properties(self, temperature_change: float) -> Dict[str, float]:
+        """
+        Calculate temperature-adjusted material properties for fatigue analysis.
+
+        High temperature reduces UTS, yield strength, and endurance limit.
+        Also introduces thermal strain that adds to mechanical strain.
+
+        Args:
+            temperature_change: Temperature change from reference in °C
+
+        Returns:
+            Dictionary containing adjusted properties:
+            - ultimate_tensile_strength: Adjusted UTS (MPa)
+            - yield_strength: Adjusted yield strength (MPa)
+            - temperature_factor: Marin temperature factor for endurance limit
+            - thermal_strain: Thermal expansion strain (mm/mm)
+        """
+        if abs(temperature_change) < 0.5:
+            return {
+                "ultimate_tensile_strength": self.material.ultimate_tensile_strength,
+                "yield_strength": self.material.yield_strength,
+                "temperature_factor": 1.0,
+                "thermal_strain": 0.0,
+            }
+
+        dt = temperature_change
+        alpha = self.material.thermal_expansion
+        temp_c = self.material.reference_temperature + dt
+
+        # UTS derating: steel strength decreases at elevated temperature
+        # Typical: ~10% loss at 200°C, ~20% at 300°C, ~50% at 500°C
+        if temp_c > 100.0:
+            uts_derating = 1.0 - 0.0005 * (temp_c - 100.0)
+            uts_derating = max(uts_derating, 0.3)
+        else:
+            uts_derating = 1.0
+
+        # Yield strength follows a similar trend
+        if temp_c > 100.0:
+            sy_derating = 1.0 - 0.0005 * (temp_c - 100.0)
+            sy_derating = max(sy_derating, 0.3)
+        else:
+            sy_derating = 1.0
+
+        # Marin temperature factor for endurance limit (kd in the Marin equation)
+        # Per Shigley: kd = 1.0 for T <= 450°C, decreases above
+        if temp_c <= 450.0:
+            kd = 1.0
+        elif temp_c <= 550.0:
+            kd = 1.0 - 0.005 * (temp_c - 450.0)
+        else:
+            kd = 0.5
+
+        # Thermal strain
+        thermal_strain = alpha * dt
+
+        adjusted_uts = self.material.ultimate_tensile_strength * uts_derating
+        adjusted_sy = self.material.yield_strength * sy_derating
+
+        self._adjusted_sut = adjusted_uts
+        self._adjusted_sy = adjusted_sy
+
+        uts_drop = self.material.ultimate_tensile_strength - adjusted_uts
+        sy_drop = self.material.yield_strength - adjusted_sy
+        logger.info(
+            f"Temperature-adjusted fatigue properties (dT={temperature_change:+.1f}C): "
+            f"UTS={adjusted_uts:.1f}MPa (-{uts_drop:.0f}MPa), "
+            f"Sy={adjusted_sy:.1f}MPa (-{sy_drop:.0f}MPa), "
+            f"kd={kd:.3f}, thermal_strain={thermal_strain:.2e}"
+        )
+
+        return {
+            "ultimate_tensile_strength": adjusted_uts,
+            "yield_strength": adjusted_sy,
+            "temperature_factor": kd,
+            "thermal_strain": thermal_strain,
+        }
 
     def calculate_endurance_limit(self) -> float:
         """
@@ -329,7 +414,21 @@ class FatigueAnalyzer:
             FatigueResults object with life, safety factor, and damage
         """
         logger.info("Starting fatigue analysis")
-        
+        self._thermal_notes = None
+
+        # Apply thermal adjustment if temperature change is specified
+        thermal_adj = None
+        if abs(loading.temperature_change) >= 0.5:
+            thermal_adj = self.calculate_temperature_adjusted_properties(loading.temperature_change)
+            # Override temperature_factor with Marin kd if not manually set
+            if temperature_factor == 1.0:
+                temperature_factor = thermal_adj["temperature_factor"]
+            self._thermal_notes = [
+                f"Thermal effects applied: dT={loading.temperature_change:+.1f}C",
+                f"Adjusted UTS: {thermal_adj['ultimate_tensile_strength']:.1f} MPa",
+                f"Marin kd (temp): {thermal_adj['temperature_factor']:.3f}",
+            ]
+
         # Determine load factor for Marin equation
         load_factor_map = {
             "bending": 1.0,
@@ -418,6 +517,10 @@ class FatigueAnalyzer:
             notes.append(f"Damage fraction ({damage_fraction:.2e}) >= 1.0 -> failure predicted")
             if failure_mode is None:
                 failure_mode = "miners_rule"
+
+        # Append thermal notes if applicable
+        if self._thermal_notes:
+            notes.extend(self._thermal_notes)
                 
         results = FatigueResults(
             safety_factor=safety_factor,
@@ -450,7 +553,10 @@ def analyze_fatigue(
     miscellaneous_factor: float = 1.0,
     frequency: float = 0.0,
     fatigue_strength_coefficient: Optional[float] = None,
-    fatigue_strength_exponent: Optional[float] = None
+    fatigue_strength_exponent: Optional[float] = None,
+    temperature_change: float = 0.0,
+    thermal_expansion: float = 12.0e-6,
+    reference_temperature: float = 20.0
 ) -> FatigueResults:
     """
     Convenience function for simple fatigue analysis.
@@ -464,37 +570,41 @@ def analyze_fatigue(
         load_type: Loading type ("bending", "axial", "torsion")
         size_factor: Size effect factor
         surface_factor: Surface finish factor
-        temperature_factor: Temperature factor
+        temperature_factor: Temperature factor (overridden by thermal model if temperature_change set)
         reliability_factor: Reliability factor (0.50-0.999)
         miscellaneous_factor: Miscellaneous effects factor
         frequency: Loading frequency in Hz
         fatigue_strength_coefficient: Basquin's sigma_f' (MPa) - if None, estimated from UTS
         fatigue_strength_exponent: Basquin's b - if None, estimated
+        temperature_change: Temperature change from reference in °C (0 = no thermal effects)
+        thermal_expansion: Coefficient of thermal expansion in 1/°C
+        reference_temperature: Reference temperature for zero thermal strain in °C
         
     Returns:
         FatigueResults object
     """
     # Estimate Basquin's parameters if not provided
     if fatigue_strength_coefficient is None:
-        # Rough approximation: sigma_f' ≈ Sut + 500 MPa for steels
         fatigue_strength_coefficient = ultimate_tensile_strength + 500.0
     if fatigue_strength_exponent is None:
-        # Typical range for steels: b = -0.05 to -0.12
         fatigue_strength_exponent = -0.09
         
     material = FatigueMaterialProperties(
         ultimate_tensile_strength=ultimate_tensile_strength,
         yield_strength=yield_strength,
-        endurance_limit=0.0,  # Will be calculated
+        endurance_limit=0.0,
         fatigue_strength_coefficient=fatigue_strength_coefficient,
         fatigue_strength_exponent=fatigue_strength_exponent,
-        fatigue_ductility_coefficient=0.0,  # Not used in this simplified version
-        fatigue_ductility_exponent=0.0
+        fatigue_ductility_coefficient=0.0,
+        fatigue_ductility_exponent=0.0,
+        thermal_expansion=thermal_expansion,
+        reference_temperature=reference_temperature
     )
     loading = FatigueLoading(
         mean_stress=mean_stress,
         alternating_stress=alternating_stress,
-        num_cycles=num_cycles
+        num_cycles=num_cycles,
+        temperature_change=temperature_change
     )
     
     analyzer = FatigueAnalyzer(material)
@@ -674,7 +784,10 @@ class FatigueAnalysis:
         sut: float,
         sy: float,
         cycles: float,
-        frequency: float = 0.0
+        frequency: float = 0.0,
+        temperature_change: float = 0.0,
+        thermal_expansion: float = 12.0e-6,
+        reference_temperature: float = 20.0
     ) -> FatigueResult:
         """
         Calculate fatigue life for given stress state and material properties.
@@ -685,6 +798,9 @@ class FatigueAnalysis:
             sy: Yield strength (MPa)
             cycles: Number of stress cycles applied
             frequency: Loading frequency (Hz) for converting to hours
+            temperature_change: Temperature change from reference in °C
+            thermal_expansion: Coefficient of thermal expansion in 1/°C
+            reference_temperature: Reference temperature in °C
             
         Returns:
             FatigueResult object with life prediction and damage assessment
@@ -693,11 +809,13 @@ class FatigueAnalysis:
         material = FatigueMaterialProperties(
             ultimate_tensile_strength=sut,
             yield_strength=sy,
-            endurance_limit=0.0,  # Will be calculated by analyzer
-            fatigue_strength_coefficient=sut + 500.0,  # Rough estimate
-            fatigue_strength_exponent=-0.09,           # Typical value
+            endurance_limit=0.0,
+            fatigue_strength_coefficient=sut + 500.0,
+            fatigue_strength_exponent=-0.09,
             fatigue_ductility_coefficient=0.0,
-            fatigue_ductility_exponent=0.0
+            fatigue_ductility_exponent=0.0,
+            thermal_expansion=thermal_expansion,
+            reference_temperature=reference_temperature
         )
         
         # Create analyzer with this material
@@ -707,17 +825,18 @@ class FatigueAnalysis:
         loading = FatigueLoading(
             mean_stress=stress_state.sigma_m,
             alternating_stress=stress_state.sigma_a,
-            num_cycles=int(cycles) if cycles > 0 else 1
+            num_cycles=int(cycles) if cycles > 0 else 1,
+            temperature_change=temperature_change
         )
         
         # Perform analysis
         results = analyzer.analyze_fatigue(
             loading=loading,
-            load_type="bending",  # Default assumption
+            load_type="bending",
             size_factor=1.0,
             surface_factor=1.0,
             temperature_factor=1.0,
-            reliability_factor=0.90,  # 90% reliability
+            reliability_factor=0.90,
             miscellaneous_factor=1.0,
             frequency=frequency
         )
@@ -737,20 +856,60 @@ class FatigueAnalysis:
 
 if __name__ == "__main__":
     # Example usage
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     
-    # Constant amplitude fatigue analysis
-    results = analyze_fatigue(
-        ultimate_tensile_strength=600.0,  # MPa
-        yield_strength=400.0,             # MPa
-        alternating_stress=200.0,         # MPa
-        mean_stress=50.0,                 # MPa
-        num_cycles=100000,                # cycles
+    print("=" * 60)
+    print("FATIGUE THERMAL EFFECTS DEMONSTRATION")
+    print("=" * 60)
+    
+    common_fatigue = dict(
+        ultimate_tensile_strength=600.0,
+        yield_strength=400.0,
+        alternating_stress=200.0,
+        mean_stress=50.0,
+        num_cycles=100000,
         load_type="bending",
-        frequency=10.0                    # Hz
+        frequency=10.0
     )
     
-    print(f"Fatigue Analysis Results (Constant Amplitude):")
+    # Baseline (no thermal effects)
+    print("\n--- Baseline (No Thermal Effects) ---")
+    base = analyze_fatigue(**common_fatigue)
+    print(f"  Safety Factor: {base.safety_factor:.2f}")
+    print(f"  Life: {base.life_cycles if base.life_cycles != float('inf') else 'inf'} cycles")
+    print(f"  Damage Fraction: {base.damage_fraction:.2e}")
+    
+    # Thermal case (+200°C)
+    print("\n--- Thermal Case (+200°C) ---")
+    hot = analyze_fatigue(**common_fatigue, temperature_change=200.0)
+    print(f"  Safety Factor: {hot.safety_factor:.2f}")
+    print(f"  Life: {hot.life_cycles if hot.life_cycles != float('inf') else 'inf'} cycles")
+    print(f"  Damage Fraction: {hot.damage_fraction:.2e}")
+    for note in hot.notes:
+        print(f"  - {note}")
+    
+    # Extreme thermal case (+500°C to show kd derating)
+    print("\n--- Extreme Thermal Case (+500°C, kd < 1) ---")
+    extreme = analyze_fatigue(**common_fatigue, temperature_change=500.0)
+    print(f"  Safety Factor: {extreme.safety_factor:.2f}")
+    print(f"  Life: {extreme.life_cycles if extreme.life_cycles != float('inf') else 'inf'} cycles")
+    print(f"  Damage Fraction: {extreme.damage_fraction:.2e}")
+    for note in extreme.notes:
+        print(f"  - {note}")
+    
+    # Comparison
+    print("\n--- Thermal Impact Summary ---")
+    if base.life_cycles != float('inf') and hot.life_cycles != float('inf') and hot.life_cycles > 0:
+        life_change = ((hot.life_cycles - base.life_cycles) / base.life_cycles) * 100
+        print(f"  Life Change (+200C): {life_change:+.1f}%")
+    print(f"  Safety Factor Change (+200C): {hot.safety_factor - base.safety_factor:+.2f}")
+    print(f"  Safety Factor Change (+500C): {extreme.safety_factor - base.safety_factor:+.2f}")
+    
+    print("\n" + "="*60 + "\n")
+    
+    # Standard single fatigue analysis (baseline)
+    print("--- Standard Fatigue Analysis (Baseline) ---")
+    results = analyze_fatigue(**common_fatigue)
     print(f"  Safety Factor: {results.safety_factor:.2f}")
     print(f"  Life: {results.life_cycles if results.life_cycles != float('inf') else 'inf'} cycles")
     print(f"  Life: {results.life_hours if results.life_hours != float('inf') else 'inf'} hours")
@@ -766,9 +925,9 @@ if __name__ == "__main__":
     
     # Variable amplitude fatigue analysis (Miner's rule)
     stress_blocks = [
-        (180.0, 20.0, 50000),   # Block 1: high stress, fewer cycles
-        (120.0, 10.0, 100000),  # Block 2: medium stress, more cycles
-        (80.0, 5.0, 200000)     # Block 3: low stress, many cycles
+        (180.0, 20.0, 50000),
+        (120.0, 10.0, 100000),
+        (80.0, 5.0, 200000)
     ]
     
     results_var = analyze_variable_amplitude_fatigue(
