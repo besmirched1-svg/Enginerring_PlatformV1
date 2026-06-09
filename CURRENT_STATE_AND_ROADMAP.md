@@ -1,8 +1,8 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
 **Last Updated**: June 9, 2026  
-**Status**: Phase 1 Hardening Complete — All Core Systems Unified  
-**Version**: v0.4.0 (Alpha)
+**Status**: Phase 3 Manufacturing Intelligence Complete — 7 Modules, 23 Tests  
+**Version**: v0.9.5 (Alpha)
 
 ---
 
@@ -160,14 +160,57 @@
 - Persistent storage of design knowledge and history
 - State: Implemented
 
-### Layer 7 — CAD Generation (app/cad/ + app/bom/)
+### Layer 7 — Manufacturing Intelligence (app/manufacturing/) ✅ NEW
 
-**X. CAD Generator** (app/cad/generator.py + app/cad/openscad_service.py + app/cad/renderer.py)
+**Z. Cut Lists** (app/manufacturing/cutlists.py)
+
+- Laser/plasma/waterjet cut schedule generation
+- Plate nesting efficiency estimation, material utilisation
+- State: Complete with 4 tests
+
+**AA. Weld Maps** (app/manufacturing/weldmaps.py)
+
+- Weld joint definitions, deposit mass, electrode/gas consumption
+- State: Complete with 3 tests
+
+**AB. Fabrication Estimation** (app/manufacturing/fabrication.py)
+
+- Fabrication hours and labour cost estimation
+- Support for 10 task types with complexity factors
+- State: Complete with 3 tests
+
+**AC. Assembly Sequence** (app/manufacturing/assembly.py)
+
+- Topological sort with dependency resolution
+- Critical path estimation
+- State: Complete with 4 tests
+
+**AD. Machining Estimation** (app/manufacturing/machining.py)
+
+- Turning, milling, drilling, grinding time estimation
+- Cutting speed and feed rate lookup tables
+- State: Complete with 3 tests
+
+**AE. Serviceability Scoring** (app/manufacturing/serviceability.py)
+
+- Service access scoring with difficulty/time/frequency weightings
+- Serviceability index (0-100)
+- State: Complete with 3 tests
+
+**AF. Cost Estimation** (app/manufacturing/costing.py)
+
+- Build cost aggregation with contingency, overhead, profit
+- Line-item and category-based breakdown
+- State: Complete with 3 tests
+
+### Layer 8 — CAD Generation (app/cad/ + app/bom/)
+
+**AG. CAD Generator** (app/cad/generator.py + app/cad/openscad_service.py + app/cad/renderer.py)
 
 - OpenSCAD template generation, rendering, STL export
 - State: Implemented
 
-**Y. BOM Generator** (app/bom/generator.py)
+**AH. BOM Generator** (app/bom/generator.py)
 
 - Bill of materials generation from machine graph
 - State: Implemented
@@ -219,6 +262,16 @@
 ### Knowledge
 
 1. ✅ Engineering knowledge store
+
+### Manufacturing Intelligence
+
+1. ✅ Cut list analysis (laser/plasma/waterjet, nesting, utilisation)
+2. ✅ Weld map generation (joint types, deposit mass, consumables)
+3. ✅ Fabrication hours estimation (10 task types, complexity factors)
+4. ✅ Assembly sequence generation (topological sort, critical path)
+5. ✅ Machining time estimation (turning/milling/drilling/grinding)
+6. ✅ Serviceability scoring (access index with difficulty weighting)
+7. ✅ Build cost estimation (direct + contingency + overhead + profit)
 
 ### CAD & BOM
 
@@ -274,19 +327,21 @@
 
 ---
 
-## Phase 3: Manufacturing Intelligence
+## Phase 3: Manufacturing Intelligence ✅ COMPLETE
 
 **Goal**: Transform designs into buildable products
 
-### Modules to create (app/manufacturing/)
+### Modules created (app/manufacturing/)
 
-- cutlists.py — Laser cut layouts, tube cut schedules, plate nesting
-- weldmaps.py — Weld schedules and mapping
-- fabrication.py — Fabrication hours estimation
-- assembly.py — Assembly sequence generation
-- machining.py — Machining estimates
-- serviceability.py — Service access scoring
-- costing.py — Build cost estimation
+- cutlists.py — Laser cut layouts, tube cut schedules, plate nesting ✅
+- weldmaps.py — Weld schedules and mapping ✅
+- fabrication.py — Fabrication hours estimation ✅
+- assembly.py — Assembly sequence generation ✅
+- machining.py — Machining estimates ✅
+- serviceability.py — Service access scoring ✅
+- costing.py — Build cost estimation ✅
+
+### Test Coverage: 23 tests, all passing
 
 ---
 
@@ -350,9 +405,9 @@
 | v0.2.0 | Phase 1 Hardening Complete | ✅ Done |
 | v0.3.0 | Architecture Unified (merge + docs) | ✅ Done |
 | v0.4.0 | Phase 1 Hardening Complete (Tasks 3/6/7) | ✅ Current |
-| v0.5.0 | Physics Thermal Complete | 🔲 |
-| v0.9.0 | Physics Engine v1.0 Freeze + Tag | 🔲 |
-| v0.9.5 | Manufacturing Intelligence | 🔲 |
+| v0.5.0 | Physics Thermal Complete | ✅ Done |
+| v0.9.0 | Physics Engine v1.0 Freeze + Tag | ✅ Done |
+| v0.9.5 | Manufacturing Intelligence | ✅ Done |
 | v1.0.0 | Autonomous Engineering Director | 🔲 |
 | v1.1.0 | Multi-Objective Optimization | 🔲 |
 | v1.2.0 | Specialized Agent Ecosystem | 🔲 |
@@ -369,7 +424,7 @@
 4. **Single-Parameter Mutation** — Only mutates parameters with failure signals
 5. **No Design Caching** — Duplicate designs are re-evaluated unnecessarily
 6. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)
-7. **No Manufacturing Intelligence** — No cut lists, weld maps, or fabrication estimates
+7. ~~**No Manufacturing Intelligence**~~ — ✅ Resolved (Phase 3 complete — 7 modules, 23 tests)
 8. **No Engineering Director** — Workflow orchestration is manual
 
 ---
