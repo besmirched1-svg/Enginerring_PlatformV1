@@ -1,8 +1,8 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
 **Last Updated**: June 9, 2026  
-**Status**: Phase 6 Specialized Agent Ecosystem Complete — 9 scoring agents integrated into Director  
-**Version**: v1.2.0 (Alpha)
+**Status**: Phase 7 Hardware Feedback Loop Complete — Telemetry → Digital Twin → Knowledge → Improvement  
+**Version**: v1.4.0 (Alpha)
 
 ---
 
@@ -434,9 +434,20 @@
 
 ---
 
-## Phase 7: Hardware Feedback Loop (Future)
+## Phase 7: Hardware Feedback Loop ✅ COMPLETE
 
 **Goal**: Real machine telemetry → Digital Twin → Knowledge → Improved Designs
+
+- [x] TelemetryIngestor wired to DigitalTwin for predicted values on each reading
+- [x] DeviationAnalyzer persists deviations in KnowledgeStore
+- [x] FeedbackTrigger fires ImprovementController and persists triggers
+- [x] ImprovementController.run_improvement_cycle() method that initiates redesign chain
+- [x] Full loop REST endpoint: POST /api/telemetry/feedback-loop/{session_id}
+- [x] Full pipeline integration test (11 tests)
+- [x] Backward compatible — all optional parameters preserve existing behavior
+- [x] Socket.IO routing wired to EventBus subscription (dashboard receives live metrics)
+- [x] Missing emit_telemetry_event function added
+- [x] Default Socket.IO namespace handlers for dashboard connectivity
 
 ---
 
@@ -455,7 +466,7 @@
 | --- | --- | --- |
 | v0.2.0 | Phase 1 Hardening Complete | ✅ Done |
 | v0.3.0 | Architecture Unified (merge + docs) | ✅ Done |
-| v0.4.0 | Phase 1 Hardening Complete (Tasks 3/6/7) | ✅ Current |
+| v0.4.0 | Phase 1 Hardening Complete (Tasks 3/6/7) | ✅ Done |
 | v0.5.0 | Physics Thermal Complete | ✅ Done |
 | v0.9.0 | Physics Engine v1.0 Freeze + Tag | ✅ Done |
 | v0.9.5 | Manufacturing Intelligence | ✅ Done |
@@ -464,6 +475,7 @@
 | v1.1.0 | Multi-Objective Optimization | ✅ Done |
 | v1.2.0 | Specialized Agent Ecosystem | ✅ Done |
 | v1.3.0 | Hardware Feedback Foundation | ✅ Done |
+| v1.4.0 | Hardware Feedback Loop Complete (Phase 7) | ✅ Current |
 | v2.0.0 | Autonomous Engineering Intelligence Platform | 🔲 |
 
 ---
@@ -476,8 +488,9 @@
 4. ~~**Single-Parameter Mutation**~~ — ✅ Resolved (Fix #4: exploration step perturbs non-signaled params at 30% rate)
 5. ~~**No Design Caching**~~ — ✅ Resolved (Fix #5: SHA-256 cache on evaluate_build() with LRU eviction at 1024)
 6. ~~**Director Uses Mock Physics/CAD**~~ — ✅ Resolved (Fix #9: ShaftAnalyzer, BearingAnalyzer, FrameAnalyzer, RotorAnalyzer, FatigueAnalyzer, VibrationAnalyzer; real CAD generation + BOM; real manufacturing analyzers)
-7. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)
+7. ~~**Physics Thermal Partial** — 3 of 6 modules have thermal effects~~ — ✅ Resolved (all 6 modules: shafts, bearings, frames, rotors, fatigue, vibration)
 8. **Agents use config-based scoring** — Only Designer/Validator directly inspect config; others require physics/manufacturing results in config dict
+9. **Dashboard metric updates require Redis** — The Socket.IO bridge subscribes to EventBus via Redis pub/sub; without Redis (NullEventBus), events are no-op and dashboard stays at placeholders
 
 ---
 
@@ -485,9 +498,9 @@
 
 | Metric | Previous | Current | Target |
 | --- | --- | --- | --- |
-| Test Count | 299 | 357 | 400 |
-| Test Coverage | ~84% | ~88% | 85% |
-| Edge Cases | 16 | 20 | 25 |
+| Test Count | 357 | 373 | 400 |
+| Test Coverage | ~88% | ~91% | 85% |
+| Edge Cases | 20 | 25 | 25 |
 | Bounds Validation Layers | 3 | 3 | 3 |
 | Documentation | 95% | 95% | 100% |
 

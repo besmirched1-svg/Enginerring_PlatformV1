@@ -1,50 +1,53 @@
 ﻿<overview>
-The user is developing an autonomous engineering intelligence platform. The project has reunified its architecture by merging Machine Graph, Drawing Intelligence, Simulation, and Domain Intelligence onto the main development branch alongside the existing core evolution, physics/FEA, and digital twin systems. Phase 1 hardening is now complete. Current: v0.4.0.
+The user is developing an autonomous engineering intelligence platform spanning 7 complete phases: Foundation, CAD/Graphs, Hemp Domain, Genetic Optimisation, Autonomous Director, Real-Time Telemetry, and Hardware Feedback Loop. Current: v1.4.0, Phase 7 complete, 373 tests passing.
 </overview>
 
 <history>
-1. Physics & FEA Engine implemented with 6 modules
-   - Thermal effects added to shafts.py, frames.py, rotors.py
-   - bearings.py, fatigue.py, vibration.py pending thermal enhancement
+1. Physics & FEA Engine: 6 modules (shafts, bearings, frames, rotors, fatigue, vibration) with thermal coupling on all 6
 
-2. Digital Twin system implemented (wear, fatigue, reliability, MTBF)
+2. Digital Twin: wear, fatigue, reliability, MTBF prediction, simulation operation
 
-3. Architecture divergence resolved: Machine Graph (models, compiler), Drawing Intelligence (ingestor, OCR, BOM, dimensions, assembly), Simulation (mass balance engine), and Hemp Domain Intelligence were on separate branch — merged cleanly into pre-production-backup
+3. Architecture reunified: Machine Graph, Vision, Simulation, Hemp Domain merged onto pre-production-backup
 
-4. Documentation: CURRENT_STATE_AND_ROADMAP.md rewritten (v0.3.0), MASTER_PROMPT.md created
+4. Phase 1-4 hardened: Redis resilience, event bus error handling, 50 loggers standardised, mutation engine, champion tracking, DesignMemoryStore
 
-5. Phase 1 Hardening complete:
-   - Task 3 (Redis resilience): Already implemented
-   - Task 6 (Event bus): Non-blocking emits with timeout and dropped-event metrics
-   - Task 7 (Logging): All 50 loggers standardized, print() removed
+5. Phase 5 - Autonomous Director: EngineerDirector pipeline, REST API, multi-agent swarm, background jobs
 
-6. Tags: v0.3.0-architecture-unified, v0.4.0-phase1-hardening-complete
+6. Phase 6 - Real-Time Telemetry: Session management, deviation analysis, feedback triggers, Socket.IO broadcasting, REST endpoints
 
-7. Repository pushed to GitLab
+7. Phase 7 - Hardware Feedback Loop: TelemetryIngestor wired to DigitalTwin, DeviationAnalyzer persists to KnowledgeStore, FeedbackTrigger fires ImprovementController, full pipeline REST endpoint
+
+8. Fixes: calculate_temperature_adjusted_properties added to ShaftAnalyzer and FrameAnalyzer, Socket.IO routing wired to dashboard (fixing n/a% bug), emit_telemetry_event added, syntax errors in dxf_importer and ocr_engine fixed
+
+9. Tags: v0.3.0, v0.4.0, v1.0.0, v1.1.0, v1.2.0, v1.3.0, v1.4.0
 </history>
 
 <work_done>
-- CURRENT_STATE_AND_ROADMAP.md — Complete rewrite
-- MASTER_PROMPT.md — New file with self-regenerating engine specification
-- app/realtime/events.py — Non-blocking _safe_emit() with timeout + metrics
-- app/workers/tasks.py — Logger name fix
-- app/core/optimization/multi_objective_optimizer.py — print() replaced with logger
-- Branch merge: main → pre-production-backup (75 files, clean merge)
+- Phase 7: Telemetry -> Digital Twin -> KnowledgeStore -> ImprovementController chain
+- POST /api/telemetry/feedback-loop/{session_id} endpoint
+- Socket.IO routing wired to EventBus bridge (dashboard now receives live metrics)
+- 5 routing unit tests + 11 hardware feedback loop integration tests
+- ShaftAnalyzer.calculate_temperature_adjusted_properties()
+- FrameAnalyzer.calculate_temperature_adjusted_properties()
+- emit_telemetry_event function added (was missing, would crash)
+- Syntax fixes: dxf_importer (backslash in f-string), ocr_engine (broken newline in string)
+- httpx2 + pytest-asyncio installed
+- Dashboard placeholder n/a -> --
+- All pushed to GitLab
 </work_done>
 
 <technical_details>
-Version: v0.4.0. Branch: pre-production-backup. All 7 layers present. 31 completed features. 50 loggers standardized. 20 passing tests.
+Version: v1.4.0. Branch: pre-production-backup. 373 tests, 0 failures, 0 warnings. All 7 phases complete. No Phase 8 defined.
 </technical_details>
 
 <next_steps>
-1. Thermal effects on bearings.py, fatigue.py, vibration.py
-2. Tag v0.9.0-physics-complete, freeze Physics v1.0
-3. Manufacturing Intelligence (cut lists, weld maps, costing)
-4. Autonomous Engineering Director
-5. Multi-Objective Pareto Optimization
-6. Specialized Agent Ecosystem
+Undefined - roadmap ends at Phase 7. Potential directions:
+- New domain (beyond hemp)
+- UI/deployment refinement
+- More physics models / failure modes
+- CI pipeline
 </next_steps>
 
 <checkpoint_title>
-Phase 1 Hardening Complete — v0.4.0
+Phase 7 Hardware Feedback Loop Complete — v1.4.0
 </checkpoint>
