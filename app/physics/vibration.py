@@ -19,6 +19,10 @@ class VibrationSystem:
     mass: float  # kg
     stiffness: float  # N/m
     damping_coefficient: float = 0.0  # N*s/m
+    # Thermal properties
+    thermal_expansion: float = 12.0e-6  # 1/deg C (default for steel)
+    reference_temperature: float = 20.0  # deg C
+    youngs_modulus: float = 200e9  # Pa (for stiffness derating)
     # For MDOF systems, we'd have matrices, but we'll start with SDOF
 
 
@@ -27,6 +31,7 @@ class VibrationLoading:
     """Loading conditions for vibration analysis."""
     force_amplitude: float = 0.0  # N
     force_frequency: float = 0.0  # Hz
+    temperature_change: float = 0.0  # deg C (positive = heating)
     # Could also support base excitation, rotating imbalance, etc.
 
 
@@ -58,14 +63,85 @@ class VibrationAnalyzer:
 
     def __init__(self, system: VibrationSystem):
         self.system = system
+        self._k_thermal = 1.0  # stiffness derating factor
+        self._c_thermal = 1.0  # damping adjustment factor
         logger.debug(f"Initialized VibrationAnalyzer with system: {system}")
+
+    def calculate_temperature_adjusted_properties(
+        self, temperature_change: float = 0.0
+    ) -> Dict[str, float]:
+        """
+        Calculate thermally-adjusted system properties.
+
+        Thermal effects on vibration:
+        1. Stiffness decreases as Young's modulus drops at high temperature.
+           E(T) = E0 * (1 - alpha_E * delta_T) where alpha_E ~ 0.00036 / C for steel
+           (typical modulus derating: ~0.036% per C for steel)
+        2. Damping coefficient increases as lubricant viscosity changes.
+           For thin oils, viscosity drops (less damping); for greases, may vary.
+           Simplified model: damping scaled by 1/(1 + 0.002 * delta_T) above 100 C.
+        3. Thermal expansion changes dimensions (affects mass distribution
+           minimally for SDOF lumped-parameter model).
+
+        Args:
+            temperature_change: Temperature rise in deg C
+
+        Returns:
+            Dict with 'k_derating', 'c_derating', 'adjusted_stiffness', 'adjusted_damping'
+        """
+        if temperature_change == 0:
+            self._k_thermal = 1.0
+            self._c_thermal = 1.0
+            return {
+                "k_derating": 1.0,
+                "c_derating": 1.0,
+                "adjusted_stiffness": self.system.stiffness,
+                "adjusted_damping": self.system.damping_coefficient,
+            }
+
+        # Young's modulus derating (typical 0.036% per C for steel)
+        # E(T) = E0 * (1 - 0.00036 * delta_T)
+        alpha_E = 0.00036  # 1/C for steel
+        modulus_factor = 1.0 - alpha_E * temperature_change
+        modulus_factor = max(modulus_factor, 0.5)  # cap at 50% reduction
+
+        # Stiffness is proportional to E * I / L^3, so k scales with E
+        k_derating = modulus_factor
+
+        # Damping adjustment: lubricant viscosity changes with temperature.
+        # Simplified model - above 100 C, damping decreases as oil thins.
+        c_derating = 1.0
+        current_temp = self.system.reference_temperature + temperature_change
+        if current_temp > 100.0:
+            # linear reduction: 0.5% per C above 100 C
+            c_derating = 1.0 - 0.005 * (current_temp - 100.0)
+            c_derating = max(c_derating, 0.2)  # cap at 80% reduction
+
+        self._k_thermal = k_derating
+        self._c_thermal = c_derating
+
+        adjusted_stiffness = self.system.stiffness * k_derating
+        adjusted_damping = self.system.damping_coefficient * c_derating
+
+        logger.debug(
+            f"Thermal adjustment: dT={temperature_change:.1f} C, "
+            f"k_factor={k_derating:.4f}, c_factor={c_derating:.4f}, "
+            f"k_adj={adjusted_stiffness:.2f} N/m, c_adj={adjusted_damping:.6f} N*s/m"
+        )
+
+        return {
+            "k_derating": k_derating,
+            "c_derating": c_derating,
+            "adjusted_stiffness": adjusted_stiffness,
+            "adjusted_damping": adjusted_damping,
+        }
 
     def calculate_natural_frequency(self) -> float:
         """
         Calculate natural frequency of undamped system.
         
-        Formula: ω_n = sqrt(k/m) [rad/s]
-                 f_n = ω_n / (2π) [Hz]
+        Formula: omega _n = sqrt(k/m) [rad/s]
+                 f_n = omega _n / (2pi ) [Hz]
         
         Returns:
             Natural frequency in Hz
@@ -84,7 +160,7 @@ class VibrationAnalyzer:
         """
         Calculate damping ratio.
         
-        Formula: ζ = c / (2 * sqrt(m*k))
+        Formula: zeta  = c / (2 * sqrt(m*k))
         
         Returns:
             Damping ratio (dimensionless)
@@ -124,8 +200,8 @@ class VibrationAnalyzer:
         """
         Calculate damped natural frequency.
         
-        Formula: ω_d = ω_n * sqrt(1 - ζ^2) [rad/s]
-                 f_d = ω_d / (2π) [Hz]
+        Formula: omega _d = omega _n * sqrt(1 - zeta ^2) [rad/s]
+                 f_d = omega _d / (2pi ) [Hz]
         
         Returns:
             Damped natural frequency in Hz
@@ -140,7 +216,7 @@ class VibrationAnalyzer:
         omega_d = omega_n * math.sqrt(1.0 - zeta**2)  # rad/s
         f_d = omega_d / (2.0 * math.pi)  # Hz
         
-        logger.debug(f"Damped natural frequency: {f_d:.4f} Hz (ζ={zeta:.4f})")
+        logger.debug(f"Damped natural frequency: {f_d:.4f} Hz (zeta ={zeta:.4f})")
         return f_d
 
     def calculate_magnification_factor(
@@ -151,11 +227,11 @@ class VibrationAnalyzer:
         """
         Calculate magnification factor for forced vibration.
         
-        Formula: MF = 1 / sqrt((1 - r^2)^2 + (2ζr)^2)
-        Where r = ω/ω_n (frequency ratio)
+        Formula: MF = 1 / sqrt((1 - r^2)^2 + (2zeta r)^2)
+        Where r = omega /omega _n (frequency ratio)
         
         Args:
-            frequency_ratio: Ratio of forcing frequency to natural frequency (ω/ω_n)
+            frequency_ratio: Ratio of forcing frequency to natural frequency (omega /omega _n)
             forcing_frequency: Forcing frequency in Hz (if provided, will calculate ratio)
             
         Returns:
@@ -183,7 +259,7 @@ class VibrationAnalyzer:
             
         MF = 1.0 / denominator
         
-        logger.debug(f"Magnification factor: {MF:.4f} (r={frequency_ratio:.4f}, ζ={zeta:.4f})")
+        logger.debug(f"Magnification factor: {MF:.4f} (r={frequency_ratio:.4f}, zeta ={zeta:.4f})")
         return MF
 
     def calculate_displacement_amplitude(
@@ -228,9 +304,9 @@ class VibrationAnalyzer:
         """
         Calculate velocity and acceleration amplitudes from displacement.
         
-        For harmonic motion: x = X * sin(ωt)
-                            v = X * ω * cos(ωt) -> V = X * ω
-                            a = -X * ω^2 * sin(ωt) -> A = X * ω^2
+        For harmonic motion: x = X * sin(omega t)
+                            v = X * omega  * cos(omega t) -> V = X * omega 
+                            a = -X * omega ^2 * sin(omega t) -> A = X * omega ^2
         
         Args:
             displacement_amplitude: Displacement amplitude in m
@@ -254,8 +330,8 @@ class VibrationAnalyzer:
         """
         Calculate phase angle between force and displacement.
         
-        Formula: φ = atan2(2ζr, 1 - r^2) [radians]
-                 φ_deg = φ * (180/π) [degrees]
+        Formula: phi  = atan2(2zeta r, 1 - r^2) [radians]
+                 phi _deg = phi  * (180/pi ) [degrees]
         
         Args:
             forcing_frequency: Forcing frequency in Hz
@@ -276,12 +352,12 @@ class VibrationAnalyzer:
         zeta = self.calculate_damping_ratio()
         
         # Phase angle in radians
-        # φ = atan2(2ζr, 1 - r^2)
+        # phi  = atan2(2zeta r, 1 - r^2)
         phi_rad = math.atan2(2.0 * zeta * r, 1.0 - r**2)
         # Convert to degrees
         phi_deg = math.degrees(phi_rad)
         
-        logger.debug(f"Phase angle: {phi_deg:.2f} degrees (r={r:.4f}, ζ={zeta:.4f})")
+        logger.debug(f"Phase angle: {phi_deg:.2f} degrees (r={r:.4f}, zeta ={zeta:.4f})")
         return phi_deg
 
     def calculate_transmissibility(
@@ -291,8 +367,8 @@ class VibrationAnalyzer:
         """
         Calculate transmissibility for base excitation.
         
-        Formula: TR = sqrt(1 + (2ζr)^2) / sqrt((1 - r^2)^2 + (2ζr)^2)
-        Where r = ω/ω_n
+        Formula: TR = sqrt(1 + (2zeta r)^2) / sqrt((1 - r^2)^2 + (2zeta r)^2)
+        Where r = omega /omega _n
         
         Args:
             forcing_frequency: Forcing frequency in Hz
@@ -321,7 +397,7 @@ class VibrationAnalyzer:
             
         TR = numerator / denominator
         
-        logger.debug(f"Transmissibility: {TR:.4f} (r={r:.4f}, ζ={zeta:.4f})")
+        logger.debug(f"Transmissibility: {TR:.4f} (r={r:.4f}, zeta ={zeta:.4f})")
         return TR
 
     def analyze_forced_vibration(
@@ -337,7 +413,23 @@ class VibrationAnalyzer:
         Returns:
             VibrationResults object with response characteristics
         """
-        logger.info("Starting forced vibration analysis")
+        # Apply thermal adjustment if temperature_change is provided
+        thermal_adj = self.calculate_temperature_adjusted_properties(
+            loading.temperature_change
+        )
+
+        # Temporarily replace system properties with thermal-adjusted values
+        _orig_stiffness = self.system.stiffness
+        _orig_damping = self.system.damping_coefficient
+        self.system.stiffness = thermal_adj["adjusted_stiffness"]
+        self.system.damping_coefficient = thermal_adj["adjusted_damping"]
+
+        logger.info(
+            f"Starting forced vibration analysis"
+            + (f" (dT={loading.temperature_change:.1f} C" if loading.temperature_change else "")
+            + (f", k_adj={thermal_adj['adjusted_stiffness']:.1f} N/m" if thermal_adj['k_derating'] != 1.0 else "")
+            + (")" if loading.temperature_change else "")
+        )
         
         # Calculate basic system properties
         natural_frequency = self.calculate_natural_frequency()
@@ -394,7 +486,7 @@ class VibrationAnalyzer:
         # Check for resonance condition
         if resonance:
             passed = False  # Resonance is often undesirable unless specifically designed for
-            notes.append(f"Resonance condition: forcing frequency ({loading.force_frequency:.2f} Hz) ≈ natural frequency ({natural_frequency:.2f} Hz)")
+            notes.append(f"Resonance condition: forcing frequency ({loading.force_frequency:.2f} Hz) ~ natural frequency ({natural_frequency:.2f} Hz)")
             if failure_mode is None:
                 failure_mode = "resonance"
                 
@@ -406,6 +498,18 @@ class VibrationAnalyzer:
             if failure_mode is None:
                 failure_mode = "excessive_acceleration"
                 
+        # Restore original system properties
+        self.system.stiffness = _orig_stiffness
+        self.system.damping_coefficient = _orig_damping
+
+        # Add thermal note if temperature change applied
+        if loading.temperature_change:
+            notes.append(
+                f"Thermal adjustment: dT={loading.temperature_change:.0f} C, "
+                f"k_derating={thermal_adj['k_derating']:.3f}, "
+                f"natural_freq_shift={natural_frequency:.3f} Hz (from {math.sqrt(_orig_stiffness / self.system.mass) / (2.0 * math.pi):.3f} Hz)"
+            )
+
         results = VibrationResults(
             natural_frequency=natural_frequency,
             damped_natural_frequency=damped_natural_frequency,
@@ -434,7 +538,8 @@ def analyze_vibration(
     stiffness: float,
     damping_coefficient: float = 0.0,
     force_amplitude: float = 0.0,
-    force_frequency: float = 0.0
+    force_frequency: float = 0.0,
+    temperature_change: float = 0.0
 ) -> VibrationResults:
     """
     Convenience function for simple vibration analysis.
@@ -445,6 +550,7 @@ def analyze_vibration(
         damping_coefficient: Damping coefficient in N*s/m
         force_amplitude: Force amplitude in N
         force_frequency: Forcing frequency in Hz
+        temperature_change: Temperature rise in deg C
         
     Returns:
         VibrationResults object
@@ -456,7 +562,8 @@ def analyze_vibration(
     )
     loading = VibrationLoading(
         force_amplitude=force_amplitude,
-        force_frequency=force_frequency
+        force_frequency=force_frequency,
+        temperature_change=temperature_change
     )
     
     analyzer = VibrationAnalyzer(system)
@@ -468,7 +575,8 @@ def analyze_base_excitation(
     stiffness: float,
     damping_coefficient: float = 0.0,
     base_acceleration_amplitude: float = 0.0,
-    base_frequency: float = 0.0
+    base_frequency: float = 0.0,
+    temperature_change: float = 0.0
 ) -> VibrationResults:
     """
     Analyze vibration due to base excitation (simplified).
@@ -479,6 +587,7 @@ def analyze_base_excitation(
         damping_coefficient: Damping coefficient in N*s/m
         base_acceleration_amplitude: Base acceleration amplitude in m/s^2
         base_frequency: Base frequency in Hz
+        temperature_change: Temperature rise in deg C
         
     Returns:
         VibrationResults object
@@ -494,7 +603,8 @@ def analyze_base_excitation(
     )
     loading = VibrationLoading(
         force_amplitude=force_amplitude,
-        force_frequency=base_frequency
+        force_frequency=base_frequency,
+        temperature_change=temperature_change
     )
     
     analyzer = VibrationAnalyzer(system)
@@ -509,7 +619,10 @@ if __name__ == "__main__":
     # Example usage
     logging.basicConfig(level=logging.DEBUG)
     
-    # Analyze a simple mass-spring-damper system
+    print("=" * 60)
+    print("Vibration Analysis - Baseline (room temperature)")
+    print("=" * 60)
+    # Analyze a simple mass-spring-damper system at room temperature
     results = analyze_vibration(
         mass=10.0,           # kg
         stiffness=10000.0,   # N/m
@@ -536,8 +649,47 @@ if __name__ == "__main__":
     if results.failure_mode:
         print(f"  Failure Mode: {results.failure_mode}")
         
-    print("\n" + "="*50 + "\n")
+    print("\n" + "=" * 60)
+    print("Vibration Analysis - Elevated Temperature (+300 C)")
+    print("=" * 60)
+    # Same system with +300 C temperature rise
+    results_hot = analyze_vibration(
+        mass=10.0,           # kg
+        stiffness=10000.0,   # N/m
+        damping_coefficient=50.0,  # N*s/m
+        force_amplitude=100.0,     # N
+        force_frequency=5.0,        # Hz
+        temperature_change=300.0    # C
+    )
     
+    print(f"Vibration Analysis Results (dT=+300 C):")
+    print(f"  Natural Frequency: {results_hot.natural_frequency:.4f} Hz")
+    print(f"  Damped Natural Frequency: {results_hot.damped_natural_frequency:.4f} Hz")
+    print(f"  Damping Ratio: {results_hot.damping_ratio:.4f}")
+    print(f"  Critical Damping: {results_hot.critical_damping:.4f} N*s/m")
+    print(f"  Magnification Factor: {results_hot.magnification_factor:.4f}")
+    print(f"  Displacement Amplitude: {results_hot.displacement_amplitude*1000:.4f} mm")
+    print(f"  Velocity Amplitude: {results_hot.velocity_amplitude:.4f} m/s")
+    print(f"  Acceleration Amplitude: {results_hot.acceleration_amplitude:.4f} m/s^2")
+    print(f"  Phase Angle: {results_hot.phase_angle:.2f} degrees")
+    print(f"  Transmissibility: {results_hot.transmissibility:.4f}")
+    print(f"  Resonance: {results_hot.resonance}")
+    print(f"  Passed: {results_hot.passed}")
+    if results_hot.notes:
+        print(f"  Notes: {', '.join(results_hot.notes)}")
+    if results_hot.failure_mode:
+        print(f"  Failure Mode: {results_hot.failure_mode}")
+    
+    # Compare natural frequencies
+    baseline_fn = results.natural_frequency
+    hot_fn = results_hot.natural_frequency
+    if baseline_fn > 0:
+        shift_pct = (hot_fn - baseline_fn) / baseline_fn * 100
+        print(f"\n  Natural frequency shift: {shift_pct:.2f}%")
+        
+    print("\n" + "="*60)
+    print("Base Excitation - Room Temperature")
+    print("="*60)
     # Example: Base excitation (e.g., earthquake or machine base vibration)
     results_base = analyze_base_excitation(
         mass=5.0,              # kg
