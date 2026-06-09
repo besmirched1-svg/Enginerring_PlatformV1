@@ -14,15 +14,19 @@ class TestHealthEndpoint:
     def test_health_returns_200(self, client):
         r = client.get("/health")
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        data = r.json()
+        assert data["status"] == "ok"
+        assert "uptime_seconds" in data
+        assert data["version"] == "2.0.0"
 
 
 class TestMetricsEndpoint:
     def test_metrics_returns_200(self, client):
         r = client.get("/metrics")
         assert r.status_code == 200
-        data = r.json()
-        assert isinstance(data, dict)
+        assert r.headers["content-type"].startswith("text/plain")
+        assert "# HELP" in r.text
+        assert "# TYPE" in r.text
 
 
 class TestStatusEndpoint:

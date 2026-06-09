@@ -9,6 +9,14 @@ from .physics import PhysicsAgent
 from .promotion import PromotionAgent
 from .reliability import ReliabilityAgent
 from .validator import ValidatorAgent
+from .committee import (  # noqa: F401
+    EngineeringCommittee,
+    NegotiationSession,
+    NegotiationRound,
+    CommitteeVote,
+    Vote,
+    create_committee,
+)
 
 __all__ = [
     "AgentInput",
@@ -26,4 +34,10 @@ __all__ = [
     "PromotionAgent",
     "ReliabilityAgent",
     "ValidatorAgent",
+    "EngineeringCommittee",
+    "NegotiationSession",
+    "NegotiationRound",
+    "CommitteeVote",
+    "Vote",
+    "create_committee",
 ]

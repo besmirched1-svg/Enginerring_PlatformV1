@@ -769,6 +769,141 @@ def run_feedback_loop(session_id: str, payload: AnalyzeRequest = AnalyzeRequest(
 
 
 # =====================================================================
+# Committee API — Autonomous Engineering Department (Phase 10)
+# =====================================================================
+#
+# POST /api/committee/run          -> run a committee negotiation session
+# GET  /api/committee/session/{id} -> retrieve a session transcript
+# GET  /api/committee/archive      -> list recent committee decisions
+# =====================================================================
+
+
+class CommitteeRunRequest(BaseModel):
+    config: Dict[str, Any]
+    prompt: str = ""
+    machine_type: str = "hemp_roller"
+    max_rounds: int = 5
+    temperature_c: float = 20.0
+    target_mass_kg: float = 0.0
+    target_cost_aud: float = 0.0
+
+
+_committee_instance = None
+
+
+def _get_committee():
+    global _committee_instance
+    if _committee_instance is None:
+        from app.agents.committee import create_committee
+        _committee_instance = create_committee()
+    return _committee_instance
+
+
+@router.post("/committee/run", tags=["committee"])
+def run_committee(payload: CommitteeRunRequest, background_tasks: BackgroundTasks):
+    """Launch a committee negotiation session as a background task."""
+    from app.agents.committee import create_committee
+
+    job_id = f"cmte_{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "init",
+            "progress": 0.0,
+            "message": "Committee session queued",
+            "errors": [],
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def _run_committee():
+        try:
+            with _jobs_lock:
+                if job_id in _jobs:
+                    _jobs[job_id]["status"] = "running"
+                    _jobs[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            committee = _get_committee()
+            session = committee.run_negotiation(
+                initial_config=payload.config,
+                prompt=payload.prompt,
+                machine_type=payload.machine_type,
+                temperature_c=payload.temperature_c,
+                target_mass_kg=payload.target_mass_kg,
+                target_cost_aud=payload.target_cost_aud,
+                max_rounds=payload.max_rounds,
+                session_id=job_id,
+            )
+
+            with _jobs_lock:
+                if job_id in _jobs:
+                    _jobs[job_id].update({
+                        "status": "complete",
+                        "stage": "complete",
+                        "progress": 1.0,
+                        "message": f"Committee {'approved' if session.approved else 'rejected'} design after {len(session.rounds)} round(s)",
+                        "result": {
+                            "session_id": session.session_id,
+                            "approved": session.approved,
+                            "rounds": len(session.rounds),
+                            "final_composite": session.final_composite,
+                            "veto_agents": session.veto_agents,
+                            "mediation_used": session.mediation_used,
+                            "champion_config": session.champion_config,
+                            "created_at": session.created_at,
+                            "completed_at": session.completed_at,
+                        },
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+        except Exception as exc:
+            logger.exception("Committee job %s crashed", job_id)
+            with _jobs_lock:
+                if job_id in _jobs:
+                    _jobs[job_id].update({
+                        "status": "failed",
+                        "stage": "crashed",
+                        "progress": 0.0,
+                        "message": str(exc),
+                        "errors": [str(exc)],
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    })
+
+    background_tasks.add_task(_run_committee)
+    logger.info("Committee session %s queued: %s", job_id, payload.prompt)
+    return {"status": "queued", "session_id": job_id, "config": payload.config}
+
+
+@router.get("/committee/session/{session_id}", tags=["committee"])
+def get_committee_session(session_id: str):
+    """Retrieve a committee session transcript."""
+    with _jobs_lock:
+        job = _jobs.get(session_id)
+    if job:
+        return {
+            "session_id": session_id,
+            "status": job.get("status"),
+            "result": job.get("result"),
+            "errors": job.get("errors", []),
+        }
+    committee = _get_committee()
+    record = committee.get_session(session_id)
+    if record:
+        return {"session_id": session_id, "status": "archived", "result": record}
+    raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+
+@router.get("/committee/archive", tags=["committee"])
+def get_committee_archive(limit: int = 20):
+    """List recent committee decisions from the archive."""
+    committee = _get_committee()
+    records = committee.get_archive(limit=limit)
+    return {"total": len(records), "records": records}
+
+
+# =====================================================================
 # Experiment API — Engineering Experiment Laboratory (Phase 8)
 # =====================================================================
 #
