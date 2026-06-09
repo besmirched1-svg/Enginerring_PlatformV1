@@ -1,95 +1,98 @@
-<overview>
-The user is developing an autonomous engineering intelligence platform spanning 7 complete phases: Foundation, CAD/Graphs, Hemp Domain, Genetic Optimisation, Autonomous Director, Real-Time Telemetry, and Hardware Feedback Loop. Current: v1.4.0, Phase 7 complete, 373 tests passing.
-</overview>
+# Conversation Summary
 
-<history>
-1. **Physics & FEA Engine** — 6 modules (shafts, bearings, frames, rotors, fatigue, vibration) with thermal coupling on all 6
+## Overview
 
-2. **Digital Twin** — wear, fatigue, reliability, MTBF prediction, simulation operation
+The user is developing an autonomous engineering intelligence platform now tracked
+against `docs/ROADMAP_V2.md` (5 layers, 18 phases). The original 7-phase engineering
+core (Foundation, CAD/Graphs, Hemp Domain, Genetic Optimisation, Autonomous Director,
+Real-Time Telemetry, Hardware Feedback Loop) is complete, followed by the V2 program:
+Phase 8 Experiment Laboratory, Phase 9 Multi-Objective Evolution (NSGA-II), Phase 10
+Autonomous Engineering Department + Platform Operations (10.5-10.9), and now Phase 11
+Factory Intelligence.
 
-3. **Architecture reunified** — Machine Graph, Vision, Simulation, Hemp Domain merged onto pre-production-backup
+Current: **v2.1.0**, Phase 11 complete, 708 tests passing (1 skipped).
 
-4. **Phase 1-4 hardened** — Redis resilience, event bus error handling, 50 loggers standardised, mutation engine, champion tracking, DesignMemoryStore
+## History
 
-5. **Phase 5 — Autonomous Director** — EngineerDirector pipeline, REST API, multi-agent swarm, background jobs
+1. **Phases 1-7 (engineering core, v1.4.0)** - Foundation, Machine Graph, Drawing
+   Intelligence, Physics/FEA (thermal-coupled), Digital Twin, Simulation, Hemp Domain,
+   Knowledge, Manufacturing, Telemetry, Hardware Feedback Loop.
+2. **Phase 8 - Engineering Experiment Laboratory (v1.5.0)** - experiment
+   definition/execution, REST API, background jobs.
+3. **Phase 9 - Multi-Objective Evolution (v1.6.0)** - NSGA-II, 10-objective optimizer,
+   knee analysis, trade-off API.
+4. **Phase 10 - Autonomous Engineering Department (v1.7.x)** - committee negotiation,
+   weighted voting, veto, mediation, deliberative design loops (`app/agents/committee.py`),
+   committee REST API.
+5. **Phase 10.5-10.9 - Platform Operations layer (v2.0.0)** - runtime/service
+   orchestration, supervisor, deployment manager, self-diagnostics, distributed compute
+   engine, backup/profiles/data-dir, structured logging + metrics + alerts, RBAC +
+   JWT-like auth + audit + digital signatures.
+6. **Phase 11 - Factory Intelligence (v2.1.0)** - factory process graphs, mass/energy
+   balance, bottleneck analysis, layout optimisation, factory-level NSGA-II Pareto
+   optimisation, plus factory CLI and API.
+7. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
+   Operations), v2.1.0 (Factory Intelligence).
 
-6. **Phase 6 — Real-Time Telemetry** — Session management, deviation analysis, feedback triggers, Socket.IO broadcasting, REST endpoints
+## Work Done (Phase 11 completion, this session)
 
-7. **Phase 7 — Hardware Feedback Loop** — TelemetryIngestor wired to DigitalTwin, DeviationAnalyzer persists to KnowledgeStore, FeedbackTrigger fires ImprovementController, full pipeline REST endpoint
+- `app/factory/models.py` - `add_stream()` now wires source/target unit input/output
+  stream lists (mirroring `connect()`); previously units built via `add_stream()` were
+  unconnected and mass balance produced zero flow.
+- `app/factory/layout.py` - overlap detection rewritten as a correct axis-aligned
+  bounding-box test on corner coordinates (was a center/half-width formula reporting
+  phantom overlaps).
+- `app/factory/optimization.py` - added `from __future__ import annotations` for
+  self-referential type hints (`FactoryIndividual.copy`); whole test module had failed
+  to import without it.
+- `app/api/routes.py` - added `GET /api/factory/status/{id}` and `/result/{id}`
+  (documented but missing); plus existing `POST /api/factory/simulate`, `/layout`,
+  `/optimize`.
+- `app/runtime/cli.py` - `factory simulate/layout/optimize` subcommands.
+- `docs/ROADMAP_V2.md` - Phase 11 marked DONE with full deliverable detail.
+- `conversation_summary.md` - this checkpoint.
 
-8. **Fixes** — `calculate_temperature_adjusted_properties` added to ShaftAnalyzer and FrameAnalyzer; Socket.IO routing wired to dashboard (fixing n/a% bug); `emit_telemetry_event` added; syntax errors in dxf_importer and ocr_engine fixed
+Existing factory package modules (committed at HEAD, completed this session):
+`models.py`, `mass_balance.py`, `energy_balance.py`, `bottleneck.py`, `layout.py`,
+`optimization.py`, `tests/test_factory.py` (52 tests).
 
-9. **Tags** — v0.3.0, v0.4.0, v1.0.0, v1.1.0, v1.2.0, v1.3.0, v1.4.0
-</history>
+## Technical Details
 
-<work_done>
-Files modified/created in recent sessions:
-- `app/physics/shafts.py` — Added `calculate_temperature_adjusted_properties()`
-- `app/physics/frames.py` — Added `calculate_temperature_adjusted_properties()`
-- `app/realtime/events.py` — Added `emit_telemetry_event`, default namespace handlers, fixed missing function
-- `app/main.py` — Added Socket.IO bridge task subscribing to EventBus
-- `app/telemetry/models.py` — Added `predicted_values` field to TelemetryRecord
-- `app/telemetry/ingestor.py` — Wired DigitalTwin and KnowledgeStore
-- `app/telemetry/analyzer.py` — Wired KnowledgeStore for deviation persistence
-- `app/telemetry/feedback.py` — Wired ImprovementController and KnowledgeStore
-- `app/core/improvement_controller.py` — Added `run_improvement_cycle()`
-- `app/api/routes.py` — Added `POST /api/telemetry/feedback-loop/{session_id}`
-- `app/importers/dxf_importer.py` — Fixed backslash in f-string
-- `app/vision/ocr_engine.py` — Fixed broken newline in string literal
-- `dashboard.html` — Placeholder n/a -> --, wired to Socket.IO events
-- `templates/dashboard.html` — Placeholder n/a -> --
-- `tests/test_hardware_feedback_loop.py` — 11 new integration tests
-- `tests/test_sio_routing.py` — 5 new routing unit tests
-- `docs/roadmap.md` — Phase 7 checklist complete
+- **Branch**: `pre-production-backup`; remote origin -> `gitlab.com/sheepleunite-group/your-repo.git`
+- **Version**: v2.1.0
+- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-11 complete
+- **Testing**: 708 passing, 1 skipped (Redis-dependent), 0 failures
+- **Conventions**: dataclass models; loggers named `engine.<subsystem>.<component>`; no
+  Unicode in print/log strings (cp1252 Windows); argparse subparsers for CLI; background
+  jobs via shared `_jobs`/`_jobs_lock` in `routes.py`
+- **Two agent systems preserved**: `app/agents/` (BaseAgent scoring committee) and
+  `app/core/swarm.py` (evolutionary design agents)
+- **Distributed compute** built in-process with threading (queue backend swappable);
+  auth/signatures use HMAC-SHA256 (zero extra deps)
 
-Infrastructure:
-- httpx2 installed (fixes StarletteDeprecationWarning)
-- pytest-asyncio installed
-- Repo pushed to GitLab
-</work_done>
+## Important Files
 
-<technical_details>
-- **Branch**: pre-production-backup
-- **Version**: v1.4.0 (Alpha)
-- **Architecture Layers**:
-  1. Core Evolution — Swarm, Mutation, Evaluation, Promotion, Orchestration
-  2. Machine Graph — Immutable models, bidirectional YAML compiler
-  3. Drawing Intelligence — OCR, BOM, dimensions, assembly detection
-  4. Physics & FEA — Shafts, bearings, frames, rotors, fatigue, vibration (all with thermal)
-  5. Digital Twin — Wear, fatigue, reliability, MTBF
-  6. Simulation — Steady-state mass balance
-  7. Domain Intelligence — Hemp process models
-  8. Knowledge — Engineering knowledge store (NDJSON)
-  9. Manufacturing — Cut lists, weld maps, fabrication, costing
-  10. Telemetry — Sessions, deviations, feedback triggers, Socket.IO
-  11. Hardware Feedback — Telemetry -> DT -> Knowledge -> Improvement
-- **Testing**: 373 tests, 0 failures, 0 warnings
-- **Real-time**: Socket.IO with default namespace for dashboard + per-subsystem namespaces
-- **Persistence**: Redis-backed queue, champion lineage, revision tracking, KnowledgeStore
-</technical_details>
+- `app/factory/` - Phase 11 package: models, mass_balance, energy_balance, bottleneck,
+  layout, optimization
+- `app/evolution/nsga2.py` - NSGA-II multi-objective optimizer (10 objectives, knee analysis)
+- `app/runtime/` - Platform Operations layer (Phases 10.5-10.9, ~20 modules) incl. `cli.py`
+- `app/agents/committee.py` - Phase 10 Autonomous Engineering Department
+- `app/api/routes.py` - FastAPI routes (committee, experiment, evolution, factory, director)
+- `app/graph/models.py`, `app/simulation/engine.py` - existing graph + single-machine mass
+  balance Phase 11 builds on
+- `docs/ROADMAP_V2.md` - guiding document, Phases 1-11 done
+- `tests/test_factory.py` - 52 Phase 11 tests
 
-<important_files>
-- `app/realtime/events.py` — Socket.IO server with all namespaces and EventBus router
-- `app/main.py` — FastAPI app with Socket.IO bridge task and lifespan
-- `app/physics/shafts.py`, `frames.py` — With thermal-adjusted properties
-- `app/telemetry/ingestor.py`, `analyzer.py`, `feedback.py` — Full hardware feedback chain
-- `app/core/improvement_controller.py` — Improvement cycle trigger
-- `app/digital_twin/digital_twin.py` — Digital twin orchestrator
-- `app/core/orchestrator.py` — Main build orchestrator
-- `dashboard.html` — Live metric display via Socket.IO
-- `tests/test_hardware_feedback_loop.py` — 11 integration tests
-- `tests/test_sio_routing.py` — 5 routing tests
-- `docs/roadmap.md` — All 7 phases checked off
-</important_files>
+## Next Steps
 
-<next_steps>
-Undefined — roadmap ends at Phase 7. Potential directions:
-- New domain(s) beyond hemp
-- UI/deployment refinement
-- More physics models / failure mode coverage
-- CI pipeline setup
-</next_steps>
+Phase 12 - Economic Engineering (v2.4.x target): treat economics as a first-class
+engineering objective.
 
-<checkpoint_title>
-Phase 7 Hardware Feedback Loop Complete — v1.4.0
-</checkpoint>
+Deliverables: capital cost, operating cost, maintenance cost, life-cycle cost, cost per
+kilogram, ownership modelling. Integrate with existing `app/manufacturing/` costing and
+factory optimisation objectives; add CLI + API + tests.
+
+## Checkpoint
+
+Phase 11 Factory Intelligence Complete - v2.1.0
+</content>

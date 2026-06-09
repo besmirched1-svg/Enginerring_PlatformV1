@@ -1,0 +1,8 @@
+{
+  "//": "Project documentation conventions. MASTER_PROMPT.md and docs/ROADMAP_V2.md use repeated top-level headings as section/version dividers (MD025) and plain fenced blocks for directory trees and examples (MD040).",
+  "default": true,
+  "MD013": false,
+  "MD024": { "siblings_only": true },
+  "MD025": false,
+  "MD040": false
+}

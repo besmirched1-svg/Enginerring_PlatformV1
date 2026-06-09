@@ -246,7 +246,7 @@ Deliverables:
 
 # v2.3.x
 
-## Phase 11 — Factory Intelligence
+## Phase 11 — Factory Intelligence (DONE)
 
 Goal:
 
@@ -254,12 +254,45 @@ Optimise complete processing plants.
 
 Deliverables:
 
-* Factory process graphs
-* Mass balance
-* Energy balance
-* Bottleneck analysis
-* Layout optimisation
-* Factory Pareto optimisation
+* Factory process graphs (`app/factory/models.py`):
+  * `ProcessUnitType` enum — 20 unit types (receiving, milling, separation, drying, packaging, splitter, merger, etc.)
+  * `StreamType` enum — material/energy/utility; `StreamComponent` for multi-component streams
+  * `ProcessUnit` dataclass — capacity, efficiency, power/heat duty, footprint, cost, config
+  * `ProcessStream` dataclass — source/target, mass flow, temperature, pressure, enthalpy
+  * `FactoryProcessGraph` — units/streams/feed/product/waste, `connect()` and `add_stream()` both wire unit I/O lists, `material_flow_order()` topological sort
+
+* Mass balance (`app/factory/mass_balance.py`):
+  * `solve_mass_balance()` — iterative steady-state solver with convergence, per-unit efficiency defaults, capacity limiting, splitter/merger handling
+  * `MassBalanceResult` / `UnitMassBalance` — feed/product/waste rates, system yield, per-unit utilisation, warnings
+
+* Energy balance (`app/factory/energy_balance.py`):
+  * `solve_energy_balance()` — total power, heat duty, specific energy (kWh/kg)
+  * `EnergyBalanceResult` with per-unit breakdown
+
+* Bottleneck analysis (`app/factory/bottleneck.py`):
+  * `analyze_bottleneck()` — per-step capacity, theoretical max throughput, OEE, bottleneck identification
+  * `BottleneckResult` / `ProcessStepCapacity`
+
+* Layout optimisation (`app/factory/layout.py`):
+  * `auto_layout()` — grid placement, material-handling distance, AABB overlap detection, placement efficiency, bounding box
+  * `LayoutSolution` / `EquipmentPosition`
+
+* Factory Pareto optimisation (`app/factory/optimization.py`):
+  * `optimize_factory()` — NSGA-II over factory configurations (fast non-dominated sort, crowding distance, tournament selection, crossover, mutation)
+  * `FactoryIndividual` / `evaluate_factory()` — multi-objective fitness (throughput, yield, energy, utilisation, OEE, layout efficiency, capital cost, bottleneck slack)
+
+* API (`app/api/routes.py`):
+  * `POST /api/factory/simulate` — mass + energy balance + bottleneck
+  * `POST /api/factory/layout` — equipment layout
+  * `POST /api/factory/optimize` — multi-objective optimisation (background job)
+  * `GET /api/factory/status/{id}` / `GET /api/factory/result/{id}` — poll + retrieve
+
+* CLI (`app/runtime/cli.py`):
+  * `factory simulate --feed-rate` — mass/energy balance report
+  * `factory layout` — layout report
+  * `factory optimize --population --generations --mutation --crossover --seed` — Pareto report
+
+* 52 factory tests, 708 total passing (1 skipped)
 
 ---
 
