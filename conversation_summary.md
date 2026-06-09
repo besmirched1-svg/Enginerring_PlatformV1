@@ -7,10 +7,10 @@ against `docs/ROADMAP_V2.md` (5 layers, 18 phases). The original 7-phase enginee
 core (Foundation, CAD/Graphs, Hemp Domain, Genetic Optimisation, Autonomous Director,
 Real-Time Telemetry, Hardware Feedback Loop) is complete, followed by the V2 program:
 Phase 8 Experiment Laboratory, Phase 9 Multi-Objective Evolution (NSGA-II), Phase 10
-Autonomous Engineering Department + Platform Operations (10.5-10.9), and now Phase 11
-Factory Intelligence.
+Autonomous Engineering Department + Platform Operations (10.5-10.9), Phase 11 Factory
+Intelligence, and now Phase 12 Economic Engineering.
 
-Current: **v2.1.0**, Phase 11 complete, 708 tests passing (1 skipped).
+Current: **v2.2.0**, Phase 12 complete, 742 tests passing (1 skipped).
 
 ## History
 
@@ -31,10 +31,27 @@ Current: **v2.1.0**, Phase 11 complete, 708 tests passing (1 skipped).
 6. **Phase 11 - Factory Intelligence (v2.1.0)** - factory process graphs, mass/energy
    balance, bottleneck analysis, layout optimisation, factory-level NSGA-II Pareto
    optimisation, plus factory CLI and API.
-7. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
-   Operations), v2.1.0 (Factory Intelligence).
+7. **Phase 12 - Economic Engineering (v2.2.0)** - `app/economics/` package: capital cost
+   (CAPEX), operating cost (OPEX), maintenance (scheduled + MTBF-driven), life-cycle cost
+   (NPV), cost per kilogram, ownership modelling (TCO/payback/ROI/NPV/IRR); factory
+   integration via `analyze_factory_economics`; CLI and API.
+8. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
+   Operations), v2.1.0 (Factory Intelligence), v2.2.0 (Economic Engineering).
 
-## Work Done (Phase 11 completion, this session)
+## Work Done (Phase 12 Economic Engineering, this session)
+
+- `app/economics/` - new package: `models.py` (assumptions + result dataclasses),
+  `capital.py`, `operating.py`, `maintenance.py`, `lifecycle.py` (NPV/EAC/IRR primitives),
+  `analysis.py` (orchestration + `analyze_factory_economics` factory bridge), `__init__.py`.
+- `app/api/routes.py` - `POST /api/economics/analyze` and `/api/economics/factory`
+  (synchronous; `OwnershipResult.to_dict()` emits null for infinite payback to stay
+  JSON-compliant).
+- `app/runtime/cli.py` - `economics analyze` and `economics factory` subcommands.
+- `docs/ROADMAP_V2.md` - Phase 12 marked DONE.
+- `tests/test_economics.py` - 34 tests (capital, operating, maintenance, lifecycle,
+  ownership, orchestration, factory integration, API).
+
+## Work Done (Phase 11 completion, prior session)
 
 - `app/factory/models.py` - `add_stream()` now wires source/target unit input/output
   stream lists (mirroring `connect()`); previously units built via `add_stream()` were
@@ -59,9 +76,11 @@ Existing factory package modules (committed at HEAD, completed this session):
 ## Technical Details
 
 - **Branch**: `pre-production-backup`; remote origin -> `gitlab.com/sheepleunite-group/your-repo.git`
-- **Version**: v2.1.0
-- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-11 complete
-- **Testing**: 708 passing, 1 skipped (Redis-dependent), 0 failures
+- **Version**: v2.2.0
+- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-12 complete
+- **Testing**: 742 passing, 1 skipped (Redis-dependent), 0 failures
+- **Docs lint**: `.markdownlint.json` formalises house conventions (MD025 repeated H1
+  dividers, MD040 plain fences) so established docs are not flagged
 - **Conventions**: dataclass models; loggers named `engine.<subsystem>.<component>`; no
   Unicode in print/log strings (cp1252 Windows); argparse subparsers for CLI; background
   jobs via shared `_jobs`/`_jobs_lock` in `routes.py`
@@ -72,6 +91,10 @@ Existing factory package modules (committed at HEAD, completed this session):
 
 ## Important Files
 
+- `app/economics/` - Phase 12 package: models, capital, operating, maintenance, lifecycle,
+  analysis (factory bridge via `analyze_factory_economics`)
+- `app/manufacturing/costing.py` - existing build/CAPEX estimator that Phase 12 economics
+  complements (lifetime view vs build view)
 - `app/factory/` - Phase 11 package: models, mass_balance, energy_balance, bottleneck,
   layout, optimization
 - `app/evolution/nsga2.py` - NSGA-II multi-objective optimizer (10 objectives, knee analysis)
@@ -85,14 +108,15 @@ Existing factory package modules (committed at HEAD, completed this session):
 
 ## Next Steps
 
-Phase 12 - Economic Engineering (v2.4.x target): treat economics as a first-class
-engineering objective.
+Phase 13 - Knowledge Reasoning (v2.5.x target): transform historical data into
+engineering wisdom.
 
-Deliverables: capital cost, operating cost, maintenance cost, life-cycle cost, cost per
-kilogram, ownership modelling. Integrate with existing `app/manufacturing/` costing and
-factory optimisation objectives; add CLI + API + tests.
+Deliverables: pattern mining, rule extraction, recommendation engine, confidence scoring,
+adaptive mutation strategies. Build on the existing KnowledgeStore (NDJSON) and champion
+lineage; feed recommendations back into the mutation/optimisation loops. Add CLI + API +
+tests, following the `app/factory/` and `app/economics/` package pattern.
 
 ## Checkpoint
 
-Phase 11 Factory Intelligence Complete - v2.1.0
+Phase 12 Economic Engineering Complete - v2.2.0
 </content>

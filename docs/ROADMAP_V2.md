@@ -298,7 +298,7 @@ Deliverables:
 
 # v2.4.x
 
-## Phase 12 — Economic Engineering
+## Phase 12 — Economic Engineering (DONE)
 
 Goal:
 
@@ -306,12 +306,38 @@ Treat economics as a first-class engineering objective.
 
 Deliverables:
 
-* Capital cost
-* Operating cost
-* Maintenance cost
-* Life-cycle cost
-* Cost per kilogram
-* Ownership modelling
+* Economic assumptions and result models (`app/economics/models.py`):
+  * `EconomicAssumptions` — plant life, discount rate, operating hours, energy/labour/material rates, maintenance/insurance/installation/engineering/contingency factors, currency (AUD)
+  * Result dataclasses with `to_dict()`: `CapitalCostResult`, `OperatingCostResult`, `MaintenanceCostResult`, `LifeCycleCostResult`, `OwnershipResult`, aggregate `EconomicAnalysis`
+
+* Capital cost / CAPEX (`app/economics/capital.py`):
+  * `compute_capital_cost()` — Lang-factor style: equipment + installation + engineering + contingency
+  * `capital_from_factory()` — aggregates per-unit `capital_cost` from a `FactoryProcessGraph`, with footprint-based fallback for un-costed units
+
+* Operating cost / OPEX (`app/economics/operating.py`):
+  * `compute_operating_cost()` — annual energy (power x hours x $/kWh), labour, raw material (feed x hours x $/kg), utilities, consumables
+
+* Maintenance cost (`app/economics/maintenance.py`):
+  * `compute_maintenance_cost()` — scheduled (% of capital/yr) plus optional MTBF-driven unscheduled repair and downtime cost (accepts reliability input from the digital twin)
+
+* Life-cycle cost and cost per kg (`app/economics/lifecycle.py`):
+  * `annuity_present_value_factor()` / `capital_recovery_factor()` discounting primitives
+  * `compute_lifecycle_cost()` — NPV of operating + maintenance over plant life, total LCC, equivalent annual cost, cost per kilogram
+  * `compute_ownership()` — total cost of ownership, annual revenue/profit, payback period, ROI, project NPV, IRR (bisection)
+
+* Orchestration and factory integration (`app/economics/analysis.py`):
+  * `analyze_economics()` — engine-agnostic full analysis from raw plant figures
+  * `analyze_factory_economics()` — bridges Phase 11: solves factory mass/energy balance for throughput and power, then runs the full economic model
+
+* API (`app/api/routes.py`):
+  * `POST /api/economics/analyze` — economics from raw plant figures
+  * `POST /api/economics/factory` — economics of the example factory graph
+
+* CLI (`app/runtime/cli.py`):
+  * `economics analyze` — full analysis from `--equipment-cost`, `--power`, `--feed-rate`, `--product-rate`, `--price`, `--mtbf`, plus `--plant-life`/`--discount-rate`/`--operating-hours`
+  * `economics factory` — economics of the example factory
+
+* 34 economics tests, 742 total passing (1 skipped)
 
 ---
 

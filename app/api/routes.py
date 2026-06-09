@@ -1154,6 +1154,86 @@ def get_factory_result(job_id: str):
     return job
 
 
+# =====================================================================
+# Economic Engineering API - Phase 12
+# =====================================================================
+#
+# POST /api/economics/analyze  -> economics from raw plant figures
+# POST /api/economics/factory  -> economics of the example factory graph
+# =====================================================================
+
+
+class EconomicAssumptionsModel(BaseModel):
+    plant_life_years: int = 20
+    discount_rate: float = 0.08
+    operating_hours_per_year: float = 6000.0
+    electricity_cost_per_kwh: float = 0.25
+    labour_rate_per_hr: float = 45.0
+    num_operators: float = 2.0
+    raw_material_cost_per_kg: float = 0.50
+
+
+class EconomicsAnalyzeRequest(BaseModel):
+    equipment_cost_aud: float = 630000.0
+    power_kw: float = 120.0
+    feed_rate_kg_hr: float = 1000.0
+    product_rate_kg_hr: float = 800.0
+    product_price_per_kg_aud: float = 0.0
+    mtbf_hours: Optional[float] = None
+    assumptions: EconomicAssumptionsModel = EconomicAssumptionsModel()
+
+
+class EconomicsFactoryRequest(BaseModel):
+    feed_rate_kg_hr: float = 1000.0
+    product_price_per_kg_aud: float = 0.0
+    mtbf_hours: Optional[float] = None
+    assumptions: EconomicAssumptionsModel = EconomicAssumptionsModel()
+
+
+def _build_assumptions(model: EconomicAssumptionsModel) -> Any:
+    from app.economics import EconomicAssumptions
+    return EconomicAssumptions(**model.model_dump())
+
+
+@router.post("/economics/analyze", tags=["economics"])
+def economics_analyze(payload: EconomicsAnalyzeRequest):
+    """Run a full economic analysis from raw plant figures."""
+    from app.economics import analyze_economics
+
+    try:
+        result = analyze_economics(
+            equipment_cost_aud=payload.equipment_cost_aud,
+            power_kw=payload.power_kw,
+            feed_rate_kg_hr=payload.feed_rate_kg_hr,
+            product_rate_kg_hr=payload.product_rate_kg_hr,
+            assumptions=_build_assumptions(payload.assumptions),
+            product_price_per_kg_aud=payload.product_price_per_kg_aud,
+            mtbf_hours=payload.mtbf_hours,
+        )
+        return {"status": "ok", "economics": result.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Economic analysis failed: {exc}")
+
+
+@router.post("/economics/factory", tags=["economics"])
+def economics_factory(payload: EconomicsFactoryRequest):
+    """Run a full economic analysis on the example factory graph."""
+    from app.economics import analyze_factory_economics
+
+    try:
+        g = _build_example_factory_graph()
+        result = analyze_factory_economics(
+            g,
+            assumptions=_build_assumptions(payload.assumptions),
+            feed_rate_kg_hr=payload.feed_rate_kg_hr,
+            product_price_per_kg_aud=payload.product_price_per_kg_aud,
+            mtbf_hours=payload.mtbf_hours,
+        )
+        return {"status": "ok", "economics": result.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Factory economic analysis failed: {exc}")
+
+
 # Reuse the same _jobs_lock and _jobs dict from Director API
 
 def _run_experiment_job(job_id: str, req: ExperimentDefineRequest) -> None:

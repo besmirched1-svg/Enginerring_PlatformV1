@@ -839,6 +839,84 @@ def cmd_factory_optimize(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# CLI: economics commands
+# ---------------------------------------------------------------------------
+
+def _print_economic_analysis(r: Any) -> None:
+    cap, op, mt, lc, ow = r.capital, r.operating, r.maintenance, r.lifecycle, r.ownership
+    cur = r.assumptions.currency
+    print()
+    print("  Economic Analysis")
+    print("  " + "=" * 56)
+    print(f"  Capital (installed):   {cur} {cap.total_capital_aud:>14,.0f}")
+    print(f"    Equipment:           {cur} {cap.equipment_cost_aud:>14,.0f}")
+    print(f"    Installation:        {cur} {cap.installation_cost_aud:>14,.0f}")
+    print(f"    Engineering:         {cur} {cap.engineering_cost_aud:>14,.0f}")
+    print(f"  Operating (per year):  {cur} {op.total_annual_aud:>14,.0f}")
+    print(f"    Energy:              {cur} {op.energy_cost_aud:>14,.0f}")
+    print(f"    Labour:              {cur} {op.labour_cost_aud:>14,.0f}")
+    print(f"    Raw material:        {cur} {op.raw_material_cost_aud:>14,.0f}")
+    print(f"  Maintenance (per year):{cur} {mt.total_annual_aud:>14,.0f}")
+    print(f"  Life-cycle cost (NPV): {cur} {lc.total_lcc_aud:>14,.0f}")
+    print(f"  Equivalent annual:     {cur} {lc.equivalent_annual_cost_aud:>14,.0f}")
+    print(f"  Annual production:     {lc.annual_production_kg:>14,.0f} kg")
+    print(f"  Cost per kg:           {cur} {lc.cost_per_kg_aud:>14.4f}")
+    print("  " + "-" * 56)
+    print(f"  Total cost of ownership:{cur} {ow.total_cost_of_ownership_aud:>13,.0f}")
+    print(f"  Annual revenue:        {cur} {ow.annual_revenue_aud:>14,.0f}")
+    print(f"  Annual profit:         {cur} {ow.annual_profit_aud:>14,.0f}")
+    pb = ow.payback_period_years
+    print(f"  Payback period:        {('%.2f yr' % pb) if pb != float('inf') else 'never':>17}")
+    print(f"  ROI:                   {ow.return_on_investment_pct:>14.1f}%")
+    print(f"  NPV:                   {cur} {ow.net_present_value_aud:>14,.0f}")
+    irr = ow.internal_rate_of_return_pct
+    print(f"  IRR:                   {('%.1f%%' % irr) if irr >= 0 else 'n/a':>17}")
+    print(f"  Profitable:            {str(ow.profitable):>17}")
+    print()
+
+
+def cmd_economics_analyze(args: argparse.Namespace) -> int:
+    from app.economics import analyze_economics, EconomicAssumptions
+
+    a = EconomicAssumptions(
+        plant_life_years=args.plant_life,
+        discount_rate=args.discount_rate,
+        operating_hours_per_year=args.operating_hours,
+    )
+    r = analyze_economics(
+        equipment_cost_aud=args.equipment_cost,
+        power_kw=args.power,
+        feed_rate_kg_hr=args.feed_rate,
+        product_rate_kg_hr=args.product_rate,
+        assumptions=a,
+        product_price_per_kg_aud=args.price,
+        mtbf_hours=args.mtbf if args.mtbf > 0 else None,
+    )
+    _print_economic_analysis(r)
+    return 0
+
+
+def cmd_economics_factory(args: argparse.Namespace) -> int:
+    from app.economics import analyze_factory_economics, EconomicAssumptions
+
+    a = EconomicAssumptions(
+        plant_life_years=args.plant_life,
+        discount_rate=args.discount_rate,
+        operating_hours_per_year=args.operating_hours,
+    )
+    g = _make_example_factory_graph()
+    r = analyze_factory_economics(
+        g,
+        assumptions=a,
+        feed_rate_kg_hr=args.feed_rate,
+        product_price_per_kg_aud=args.price,
+        mtbf_hours=args.mtbf if args.mtbf > 0 else None,
+    )
+    _print_economic_analysis(r)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -932,6 +1010,23 @@ def main() -> int:
     opt_p.add_argument("--crossover", type=float, default=0.8, help="Crossover rate")
     opt_p.add_argument("--seed", type=int, default=None, help="Random seed")
 
+    # economics
+    econ_p = subparsers.add_parser("economics", help="Economic engineering commands")
+    econ_sub = econ_p.add_subparsers(dest="economics_cmd")
+    for name, help_text in (("analyze", "Analyze economics from raw plant figures"),
+                            ("factory", "Analyze economics of the example factory")):
+        ep = econ_sub.add_parser(name, help=help_text)
+        ep.add_argument("--feed-rate", type=float, default=1000.0, help="Feed rate kg/hr")
+        ep.add_argument("--price", type=float, default=0.0, help="Product price per kg")
+        ep.add_argument("--plant-life", type=int, default=20, help="Plant life (years)")
+        ep.add_argument("--discount-rate", type=float, default=0.08, help="Discount rate (fraction)")
+        ep.add_argument("--operating-hours", type=float, default=6000.0, help="Operating hours per year")
+        ep.add_argument("--mtbf", type=float, default=0.0, help="Mean time between failures (hours, 0 to skip)")
+    analyze_ep = econ_sub.choices["analyze"]
+    analyze_ep.add_argument("--equipment-cost", type=float, default=630000.0, help="Bare equipment cost")
+    analyze_ep.add_argument("--power", type=float, default=120.0, help="Plant power draw kW")
+    analyze_ep.add_argument("--product-rate", type=float, default=800.0, help="Product rate kg/hr")
+
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging")
 
@@ -989,6 +1084,12 @@ def main() -> int:
             "optimize": cmd_factory_optimize,
         }
         return factory_map.get(args.factory_cmd, lambda a: print("Unknown factory command"))(args)
+    elif args.command == "economics":
+        economics_map = {
+            "analyze": cmd_economics_analyze,
+            "factory": cmd_economics_factory,
+        }
+        return economics_map.get(args.economics_cmd, lambda a: print("Unknown economics command"))(args)
     elif args.command == "data-dir":
         return cmd_data_dir(args)
     elif args.command == "dashboard":
