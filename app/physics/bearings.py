@@ -21,6 +21,9 @@ class BearingGeometry:
     dynamic_load_rating: float  # N (C - basic dynamic load rating)
     static_load_rating: float   # N (Co - basic static load rating)
     limiting_speed: float  # rpm (maximum operational speed)
+    # Thermal properties
+    thermal_expansion: float = 12.0e-6  # 1/°C (default for steel)
+    reference_temperature: float = 20.0  # °C
 
 
 @dataclass
@@ -30,6 +33,7 @@ class BearingLoads:
     axial_load: float = 0.0       # N (axial direction)
     moment_load: float = 0.0      # N*mm (tilting moment)
     speed: float = 0.0            # rpm (rotational speed)
+    temperature_change: float = 0.0  # °C (change from reference temperature)
 
 
 @dataclass
@@ -58,7 +62,84 @@ class BearingAnalyzer:
 
     def __init__(self, geometry: BearingGeometry):
         self.geometry = geometry
+        self._adjusted_dynamic_rating: Optional[float] = None
+        self._adjusted_static_rating: Optional[float] = None
+        self._adjusted_bore: Optional[float] = None
+        self._adjusted_outer: Optional[float] = None
+        self._adjusted_width: Optional[float] = None
+        self._thermal_notes: List[str] = None
         logger.debug(f"Initialized BearingAnalyzer for {geometry.bearing_type} bearing")
+
+    def calculate_temperature_adjusted_properties(self, temperature_change: float) -> Dict[str, float]:
+        """
+        Calculate temperature-adjusted dimensions and load ratings.
+
+        Thermal expansion affects bearing geometry (clearances, fits) and
+        material properties (hardness, lubricant viscosity), which in turn
+        affect dynamic/static load ratings.
+
+        Args:
+            temperature_change: Temperature change from reference in °C
+
+        Returns:
+            Dictionary containing adjusted properties:
+            - bore_diameter: Adjusted bore diameter (mm)
+            - outer_diameter: Adjusted outer diameter (mm)
+            - width: Adjusted width (mm)
+            - dynamic_load_rating: Temperature-derated dynamic load rating (N)
+            - static_load_rating: Temperature-derated static load rating (N)
+        """
+        if abs(temperature_change) < 0.5:
+            return {
+                "bore_diameter": self.geometry.bore_diameter,
+                "outer_diameter": self.geometry.outer_diameter,
+                "width": self.geometry.width,
+                "dynamic_load_rating": self.geometry.dynamic_load_rating,
+                "static_load_rating": self.geometry.static_load_rating,
+            }
+
+        alpha = self.geometry.thermal_expansion
+        dt = temperature_change
+
+        # Dimensional changes from thermal expansion
+        bore_adj = self.geometry.bore_diameter * (1.0 + alpha * dt)
+        outer_adj = self.geometry.outer_diameter * (1.0 + alpha * dt)
+        width_adj = self.geometry.width * (1.0 + alpha * dt)
+
+        # Load rating derating: bearing steel hardness decreases at high temp
+        # ISO 281 recommends derating above ~120°C
+        temp_c = self.geometry.reference_temperature + temperature_change
+        if temp_c > 120.0:
+            derating = 1.0 - 0.0006 * (temp_c - 120.0)
+            derating = max(derating, 0.5)
+        else:
+            derating = 1.0
+
+        dynamic_adj = self.geometry.dynamic_load_rating * derating
+        static_adj = self.geometry.static_load_rating * derating
+
+        self._adjusted_dynamic_rating = dynamic_adj
+        self._adjusted_static_rating = static_adj
+        self._adjusted_bore = bore_adj
+        self._adjusted_outer = outer_adj
+        self._adjusted_width = width_adj
+
+        dyn_drop = self.geometry.dynamic_load_rating - dynamic_adj
+        stat_drop = self.geometry.static_load_rating - static_adj
+        logger.info(
+            f"Temperature-adjusted bearing properties (dT={temperature_change:+.1f}C): "
+            f"bore={bore_adj:.3f}mm, outer={outer_adj:.3f}mm, "
+            f"dynamic={dynamic_adj:.1f}N (-{dyn_drop:.0f}N), "
+            f"static={static_adj:.1f}N (-{stat_drop:.0f}N)"
+        )
+
+        return {
+            "bore_diameter": bore_adj,
+            "outer_diameter": outer_adj,
+            "width": width_adj,
+            "dynamic_load_rating": dynamic_adj,
+            "static_load_rating": static_adj,
+        }
 
     def calculate_equivalent_dynamic_load(
         self, 
@@ -300,7 +381,23 @@ class BearingAnalyzer:
             BearingResults object with life, safety factors, and performance metrics
         """
         logger.info("Starting bearing analysis")
+
+        # Apply thermal adjustment if temperature change is specified
+        if abs(loads.temperature_change) >= 0.5:
+            adj = self.calculate_temperature_adjusted_properties(loads.temperature_change)
+            self._thermal_notes = [
+                f"Thermal effects applied: dT={loads.temperature_change:+.1f}C",
+                f"Derated dynamic load: {adj['dynamic_load_rating']:.1f} N",
+                f"Derated static load: {adj['static_load_rating']:.1f} N",
+            ]
+        else:
+            adj = None
+            self._thermal_notes = None
         
+        # Determine adjusted load ratings if thermal effects are active
+        dyn_rating = adj["dynamic_load_rating"] if adj else None
+        stat_rating = adj["static_load_rating"] if adj else None
+
         # Calculate equivalent loads
         # For simplicity, we'll use factors based on bearing type
         if self.geometry.bearing_type == "ball":
@@ -336,11 +433,17 @@ class BearingAnalyzer:
             axial_factor=0.5
         )
         
-        # Calculate fatigue life
-        life_hours, life_revolutions = self.calculate_fatigue_life(equivalent_dynamic_load)
+        # Calculate fatigue life with thermal-adjusted ratings
+        life_hours, life_revolutions = self.calculate_fatigue_life(
+            equivalent_dynamic_load,
+            dynamic_load_rating=dyn_rating
+        )
         
-        # Calculate static safety factor
-        static_safety_factor = self.calculate_static_safety_factor(equivalent_static_load)
+        # Calculate static safety factor with thermal-adjusted ratings
+        static_safety_factor = self.calculate_static_safety_factor(
+            equivalent_static_load,
+            static_load_rating=stat_rating
+        )
         
         # Calculate friction and power loss
         friction_torque = self.estimate_friction_torque(
@@ -394,6 +497,10 @@ class BearingAnalyzer:
             if failure_mode is None:
                 failure_mode = "speed_exceeded"
                 
+        # Append thermal notes if applicable
+        if self._thermal_notes:
+            notes.extend(self._thermal_notes)
+
         results = BearingResults(
             equivalent_dynamic_load=equivalent_dynamic_load,
             equivalent_static_load=equivalent_static_load,
@@ -426,7 +533,10 @@ def analyze_bearing(
     axial_load: float = 0.0,
     speed: float = 0.0,
     bearing_type: str = "ball",
-    temperature_rise_per_watt: float = 0.5
+    temperature_rise_per_watt: float = 0.5,
+    temperature_change: float = 0.0,
+    thermal_expansion: float = 12.0e-6,
+    reference_temperature: float = 20.0
 ) -> BearingResults:
     """
     Convenience function for simple bearing analysis.
@@ -443,6 +553,9 @@ def analyze_bearing(
         speed: Rotational speed in rpm
         bearing_type: Type of bearing ("ball", "roller", etc.)
         temperature_rise_per_watt: Temperature rise per watt of power loss (°C/W)
+        temperature_change: Temperature change from reference in °C (0 = no thermal effects)
+        thermal_expansion: Coefficient of thermal expansion in 1/°C
+        reference_temperature: Reference temperature for zero thermal strain in °C
         
     Returns:
         BearingResults object
@@ -454,12 +567,15 @@ def analyze_bearing(
         width=width,
         dynamic_load_rating=dynamic_load_rating,
         static_load_rating=static_load_rating,
-        limiting_speed=limiting_speed
+        limiting_speed=limiting_speed,
+        thermal_expansion=thermal_expansion,
+        reference_temperature=reference_temperature
     )
     loads = BearingLoads(
         radial_load=radial_load,
         axial_load=axial_load,
-        speed=speed
+        speed=speed,
+        temperature_change=temperature_change
     )
     
     analyzer = BearingAnalyzer(geometry)
@@ -468,23 +584,54 @@ def analyze_bearing(
 
 if __name__ == "__main__":
     # Example usage
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     
-    # Analyze a typical ball bearing
-    results = analyze_bearing(
-        bore_diameter=25.0,      # mm
-        outer_diameter=52.0,     # mm
-        width=15.0,              # mm
-        dynamic_load_rating=20000.0,  # N (C)
-        static_load_rating=10000.0,   # N (Co)
-        limiting_speed=15000.0, # rpm
-        radial_load=500.0,       # N
-        axial_load=200.0,        # N
-        speed=1500.0,            # rpm
+    print("=" * 60)
+    print("BEARING THERMAL EFFECTS DEMONSTRATION")
+    print("=" * 60)
+    
+    # Common parameters
+    common = dict(
+        bore_diameter=25.0,
+        outer_diameter=52.0,
+        width=15.0,
+        dynamic_load_rating=20000.0,
+        static_load_rating=10000.0,
+        limiting_speed=15000.0,
+        radial_load=500.0,
+        axial_load=200.0,
+        speed=1500.0,
         bearing_type="ball"
     )
     
-    print(f"Bearing Analysis Results:")
+    # Baseline (no thermal effects)
+    print("\n--- Baseline (No Thermal Effects) ---")
+    base = analyze_bearing(**common)
+    print(f"  Fatigue Life: {base.fatigue_life_hours:.1f} hours")
+    print(f"  Static Safety Factor: {base.static_safety_factor:.2f}")
+    print(f"  Power Loss: {base.power_loss:.3f} W")
+    print(f"  Passed: {base.passed}")
+    
+    # Thermal case (+150°C to show derating)
+    print("\n--- Thermal Case (+150°C) ---")
+    hot = analyze_bearing(**common, temperature_change=150.0)
+    print(f"  Fatigue Life: {hot.fatigue_life_hours:.1f} hours")
+    print(f"  Static Safety Factor: {hot.static_safety_factor:.2f}")
+    print(f"  Power Loss: {hot.power_loss:.3f} W")
+    print(f"  Passed: {hot.passed}")
+    for note in hot.notes:
+        print(f"  - {note}")
+    
+    # Comparison
+    print("\n--- Thermal Impact Summary ---")
+    life_change = ((hot.fatigue_life_hours - base.fatigue_life_hours) / base.fatigue_life_hours) * 100
+    print(f"  Fatigue Life Change: {life_change:+.1f}%")
+    print(f"  Static FS Change: {hot.static_safety_factor - base.static_safety_factor:+.2f}")
+    print()
+
+    # Standard single bearing analysis (baseline)
+    print("\n--- Standard Single Bearing Analysis (Baseline) ---")
+    results = analyze_bearing(**common)
     print(f"  Equivalent Dynamic Load: {results.equivalent_dynamic_load:.2f} N")
     print(f"  Equivalent Static Load: {results.equivalent_static_load:.2f} N")
     print(f"  Fatigue Life: {results.fatigue_life_hours:.1f} hours")
