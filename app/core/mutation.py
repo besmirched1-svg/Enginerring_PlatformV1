@@ -1,7 +1,12 @@
+import hashlib
+import json
 import logging
 from typing import Dict, Any
 
 logger = logging.getLogger("engine.mutation")
+
+# Exploration probability: how often to mutate a non-signaled parameter
+EXPLORATION_RATE = 0.3
 
 # Hard parameter bounds (mm) - enforced for all mutations
 # These limits are based on engineering constraints and manufacturing feasibility
@@ -115,7 +120,28 @@ def propose_next_config(current_config: Dict[str, Any], evaluation_result: Dict[
         if was_clamped:
             logger.debug(f"Clearance minimum boundary reached: {clearance}mm → {clamped_clearance}mm")
         
-    # 3. Final comprehensive bounds validation
+    # 3. Exploration: mutate a non-signaled parameter for broader search
+    changed_keys = {k for k in next_config if next_config[k] != current_config.get(k)}
+    config_hash = hashlib.md5(json.dumps(current_config, sort_keys=True).encode()).hexdigest()
+    seed = int(config_hash[:8], 16)
+    for idx, param in enumerate(["wall_thickness", "roller_radius", "clearance"]):
+        if param in changed_keys:
+            continue
+        # Deterministic pseudo-random from config hash
+        p = ((seed + idx * 137) % 1000) / 1000.0
+        if p >= EXPLORATION_RATE:
+            continue
+        current_val = float(next_config.get(param, PARAMETER_BOUNDS[param]["min"]))
+        bounds = PARAMETER_BOUNDS[param]
+        delta = bounds["max"] - bounds["min"]
+        # Perturb by up to 10% of the range, direction from hash
+        direction = 1 if ((seed + idx * 73) % 2 == 0) else -1
+        magnitude = delta * 0.1 * (((seed + idx * 251) % 100) / 100.0)
+        new_val, _ = _validate_bounds(param, current_val + direction * magnitude)
+        next_config[param] = new_val
+        logger.info("Exploration: %s %s→%s (%.2f→%.2f)", param, current_val, new_val, current_val, new_val)
+
+    # 4. Final comprehensive bounds validation
     for param_name in ["wall_thickness", "roller_radius", "clearance"]:
         if param_name in next_config:
             final_value, was_clamped = _validate_bounds(param_name, float(next_config[param_name]))

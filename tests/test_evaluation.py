@@ -4,6 +4,8 @@ from app.core.evaluation import (
     evaluate_build,
     total_mass_from_bom_rows,
     IMPROVEMENT_THRESHOLD,
+    _design_cache,
+    _make_cache_key,
 )
 
 
@@ -139,3 +141,50 @@ class TestTotalMassFromBomRows:
         spindle = total_mass_from_bom_rows([{"part": "Spindle", "config": {}}])
         drum = total_mass_from_bom_rows([{"part": "Drum", "config": {}}])
         assert abs(total - (spindle + drum)) < 0.01
+
+
+class TestDesignCache:
+    """Test the design caching feature (Fix #5)."""
+
+    def test_cache_hit_returns_cached_flag(self):
+        """Second call with same config should return cached=True."""
+        config = {"spindle": {"flight_od": 400, "shaft_od": 200, "flight_pitch": 600, "flight_thickness": 10}, "drum": {"drum_id": 600, "drum_length": 2000, "wall_thickness": 8}, "frame": {"rail_a": 200, "rail_b": 100, "rail_t": 9, "skid_width": 1800, "cross_a": 150, "cross_b": 100, "cross_t": 8, "rail_length": 5000}}
+        _design_cache.clear()
+        r1 = evaluate_build(config, 5000.0)
+        r2 = evaluate_build(config, 5000.0)
+        assert r1["cached"] is False
+        assert r2["cached"] is True
+        assert r1["composite"] == r2["composite"]
+
+    def test_cache_miss_different_config(self):
+        """Different configs should produce cache miss."""
+        _design_cache.clear()
+        c1 = {"spindle": {"flight_od": 400}}
+        c2 = {"spindle": {"flight_od": 500}}
+        r1 = evaluate_build(c1)
+        r2 = evaluate_build(c2)
+        assert r1["cached"] is False
+        assert r2["cached"] is False
+
+    def test_cache_key_includes_mass(self):
+        """Same config but different mass should be different cache entries."""
+        _design_cache.clear()
+        config = {"spindle": {"flight_od": 400}}
+        r1 = evaluate_build(config, 1000.0)
+        r2 = evaluate_build(config, 2000.0)
+        assert r1["cached"] is False
+        assert r2["cached"] is False
+
+    def test_cache_key_is_string(self):
+        key = _make_cache_key({"a": 1}, 100.0)
+        assert isinstance(key, str)
+        assert len(key) == 64  # SHA-256 hex
+
+    def test_cache_eviction(self):
+        """Cache should evict oldest entries when over limit."""
+        from app.core.evaluation import _MAX_CACHE
+        _design_cache.clear()
+        for i in range(_MAX_CACHE + 10):
+            cfg = {"spindle": {"flight_od": float(400 + i)}}
+            evaluate_build(cfg)
+        assert len(_design_cache) <= _MAX_CACHE

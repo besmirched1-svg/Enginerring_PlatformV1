@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 from dataclasses import dataclass, field
@@ -341,12 +343,22 @@ _WEIGHTS = {
 }
 
 
+# Design cache: keyed by hash of config+mass, evicts LRU when > 1024 entries
+_design_cache: dict[str, dict[str, Any]] = {}
+_MAX_CACHE = 1024
+
+
+def _make_cache_key(config: dict[str, Any], total_mass_kg: float | None) -> str:
+    raw = json.dumps(config, sort_keys=True, default=str) + f"|mass={total_mass_kg}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def evaluate_build(
     config: dict[str, Any],
     total_mass_kg: float | None = None,
 ) -> dict[str, Any]:
     """
-    Score a build. Returns:
+    Score a build, with design caching. Returns:
 
         {
           "composite": 0.0-1.0,
@@ -356,8 +368,15 @@ def evaluate_build(
               ...
           },
           "all_issues": [...],
+          "cached": bool,         # True if returned from cache
         }
     """
+    cache_key = _make_cache_key(config, total_mass_kg)
+    cached = _design_cache.get(cache_key)
+    if cached is not None:
+        logger.debug("Design cache hit for config hash %s", cache_key[:12])
+        return dict(cached, cached=True)
+
     metrics = {
         "structural_validity":    _structural_validity(config),
         "manufacturability":      _manufacturability(config),
@@ -372,7 +391,7 @@ def evaluate_build(
     for m in metrics.values():
         all_issues.extend(m.issues)
 
-    return {
+    result: dict[str, Any] = {
         "composite": round(composite, 4),
         "needs_improvement": composite < IMPROVEMENT_THRESHOLD,
         "metrics": {
@@ -381,6 +400,13 @@ def evaluate_build(
         },
         "all_issues": all_issues,
     }
+
+    # Store in cache (evict oldest if over limit)
+    if len(_design_cache) >= _MAX_CACHE:
+        _design_cache.pop(next(iter(_design_cache)))
+    _design_cache[cache_key] = result
+
+    return dict(result, cached=False)
 
 
 def total_mass_from_bom_rows(bom_rows: list[dict]) -> float:
