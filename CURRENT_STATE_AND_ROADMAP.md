@@ -177,6 +177,7 @@
 ## Completed Features ✅
 
 ### Core Evolution
+
 1. ✅ Multi-agent swarm optimization loop
 2. ✅ 3-layer parameter bounds enforcement
 3. ✅ Composite scoring system (structural/material/performance)
@@ -187,53 +188,62 @@
 8. ✅ API input validation (Pydantic at boundary)
 
 ### Machine Graph & Intelligence
-9. ✅ Machine Graph architecture (immutable models, YAML compiler)
-10. ✅ Drawing intelligence pipeline (OCR, BOM, dimensions, assembly detection)
-11. ✅ Machine graph builder from vision pipeline outputs
-12. ✅ Bidirectional YAML compilation (dict ↔ MachineGraph)
+
+1. ✅ Machine Graph architecture (immutable models, YAML compiler)
+2. ✅ Drawing intelligence pipeline (OCR, BOM, dimensions, assembly detection)
+3. ✅ Machine graph builder from vision pipeline outputs
+4. ✅ Bidirectional YAML compilation (dict ↔ MachineGraph)
 
 ### Physics & FEA (6 of 6 modules implemented, 3 with thermal)
-13. ✅ Shaft analysis with thermal effects
-14. ✅ Frame analysis with thermal effects
-15. ✅ Rotor analysis with thermal effects
-16. ✅ Bearing analysis (base implementation)
-17. ✅ Fatigue analysis (base implementation)
-18. ✅ Vibration analysis (base implementation)
+
+1. ✅ Shaft analysis with thermal effects
+2. ✅ Frame analysis with thermal effects
+3. ✅ Rotor analysis with thermal effects
+4. ✅ Bearing analysis (base implementation)
+5. ✅ Fatigue analysis (base implementation)
+6. ✅ Vibration analysis (base implementation)
 
 ### Digital Twin
-19. ✅ Time-domain simulation
-20. ✅ Wear modelling
-21. ✅ Fatigue accumulation
-22. ✅ Reliability prediction / MTBF estimation
-23. ✅ Maintenance forecasting
+
+1. ✅ Time-domain simulation
+2. ✅ Wear modelling
+3. ✅ Fatigue accumulation
+4. ✅ Reliability prediction / MTBF estimation
+5. ✅ Maintenance forecasting
 
 ### Simulation & Domain
-24. ✅ Steady-state process simulation (mass balance, bottleneck detection)
-25. ✅ Hemp process intelligence (fibre recovery, quality, throughput, power)
+
+1. ✅ Steady-state process simulation (mass balance, bottleneck detection)
+2. ✅ Hemp process intelligence (fibre recovery, quality, throughput, power)
 
 ### Knowledge
-26. ✅ Engineering knowledge store
+
+1. ✅ Engineering knowledge store
 
 ### CAD & BOM
-27. ✅ CAD generation (OpenSCAD, STL export)
-28. ✅ BOM generation
+
+1. ✅ CAD generation (OpenSCAD, STL export)
+2. ✅ BOM generation
 
 ### Test Coverage
-29. ✅ 20 passing tests (mutation edge cases, determinism, bounds)
-30. ✅ Parameter bounds documented with engineering rationale
-31. ✅ System state and architecture documented
+
+1. ✅ 20 passing tests (mutation edge cases, determinism, bounds)
+2. ✅ Parameter bounds documented with engineering rationale
+3. ✅ System state and architecture documented
 
 ---
 
 ## Phase Remaining: Code Cleanup & Hardening
 
 ### Task 3: Improvement Controller Resilience ⏳ NOT STARTED
+
 - Exponential backoff retry decorator for Redis operations
 - Connection retry with max attempts
 - Heartbeat monitoring for Redis availability
 - **Estimated**: 2-3 hours
 
 ### Task 6: Event Bus Error Handling ⏳ NOT STARTED
+
 - Non-blocking event emission
 - WebSocket broadcast timeout
 - Failure logging instead of exceptions
@@ -241,6 +251,7 @@
 - **Estimated**: 1-2 hours
 
 ### Task 7: Logging Consistency ⏳ NOT STARTED
+
 - Standardized logger naming (engine.subsystem pattern)
 - Remove print() statements
 - Correlation IDs for request tracing
@@ -253,11 +264,13 @@
 **Goal**: Complete thermal effects for all 6 physics modules
 
 ### Remaining
+
 - [ ] bearings.py — thermal expansion, temperature-adjusted load capacity, thermal lifetime derating
 - [ ] fatigue.py — temperature-dependent S-N curves, thermal derating
 - [ ] vibration.py — temperature-dependent damping and stiffness
 
 ### After Completion
+
 - Tag: `v0.9.0-physics-complete`
 - Freeze Physics Engine v1.0 (bug fixes only)
 
@@ -268,6 +281,7 @@
 **Goal**: Transform designs into buildable products
 
 ### Modules to create (app/manufacturing/)
+
 - cutlists.py — Laser cut layouts, tube cut schedules, plate nesting
 - weldmaps.py — Weld schedules and mapping
 - fabrication.py — Fabrication hours estimation
@@ -283,6 +297,7 @@
 **Goal**: AI Chief Engineer — user provides goal, system produces engineering pack
 
 ### Module to create (app/director/)
+
 - Planning → Variant Generation → Physics → Simulation
 - Digital Twin → Manufacturing Analysis → Cost Analysis
 - Pareto Optimization → Champion Selection → Engineering Pack
@@ -294,10 +309,12 @@
 **Goal**: Replace single composite score with Pareto-front optimization
 
 ### Objectives
+
 - Fibre Recovery, Fibre Quality, Power, Weight
 - Capital Cost, Operating Cost, Maintenance, MTBF, Reliability
 
 ### Method
+
 - NSGA-II or similar Pareto-front evolutionary optimization
 
 ---
@@ -307,6 +324,7 @@
 **Goal**: Domain-specialized scoring agents
 
 ### Agents
+
 - Designer, Validator, Physics, Digital Twin
 - Manufacturing, Cost, Reliability, Compliance, Promotion
 
@@ -373,17 +391,20 @@
 ## Quick Start
 
 ### Run Local Optimization Loop
+
 ```bash
 python run_autonomous_loop.py
 ```
 
 ### Run Tests
+
 ```bash
 pytest tests/ -v
 pytest tests/test_mutation_edge_cases.py -v
 ```
 
 ### Check Parameter Bounds
+
 ```bash
 grep -A 5 "PARAMETER_BOUNDS = {" app/core/mutation.py
 ```
