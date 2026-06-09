@@ -45,3 +45,8 @@
 - [x] Full loop REST endpoint: POST /api/telemetry/feedback-loop/{session_id}
 - [x] Full pipeline integration test
 - [x] Backward compatible — all existing optional parameters preserved
+
+---
+
+**Original roadmap complete — v1.4.0 marks the end of the first-generation platform.**
+**See ROADMAP_V2.md for the second-generation roadmap (Phases 8+).**

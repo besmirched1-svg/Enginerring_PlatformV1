@@ -766,3 +766,198 @@ def run_feedback_loop(session_id: str, payload: AnalyzeRequest = AnalyzeRequest(
         "triggers_generated": len(triggers),
         "triggers": triggers,
     }
+
+
+# =====================================================================
+# Experiment API — Engineering Experiment Laboratory (Phase 8)
+# =====================================================================
+#
+# POST /api/experiment/define    -> define experiment parameters
+# POST /api/experiment/run       -> start experiment (background job)
+# GET  /api/experiment/status/{id} -> poll experiment progress
+# GET  /api/experiment/result/{id} -> full experiment report
+# =====================================================================
+
+class ExperimentParamRange(BaseModel):
+    name: str
+    min_value: float
+    max_value: float
+    step: Optional[float] = None
+
+
+class ExperimentObjectiveDef(BaseModel):
+    name: str
+    minimize: bool = True
+    weight: float = 1.0
+
+
+class ExperimentDefineRequest(BaseModel):
+    name: str = "Untitled Experiment"
+    description: str = ""
+    machine_type: str = "hemp_roller"
+    parameter_ranges: List[ExperimentParamRange] = []
+    objectives: List[ExperimentObjectiveDef] = []
+    sample_method: str = "random"
+    sample_count: int = 50
+    max_concurrent: int = 4
+    temperature_c: float = 20.0
+
+
+class ExperimentJobInfo(BaseModel):
+    job_id: str
+    status: str = "queued"
+    progress: float = 0.0
+    message: str = ""
+    errors: List[str] = []
+
+
+# Reuse the same _jobs_lock and _jobs dict from Director API
+
+def _run_experiment_job(job_id: str, req: ExperimentDefineRequest) -> None:
+    """Background worker: runs an experiment."""
+    def on_status(stage: str, progress: float, message: str) -> None:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "stage": stage,
+                    "progress": progress,
+                    "message": message,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    try:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id]["status"] = "running"
+                _jobs[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        from app.experiment.models import (
+            ExperimentDefinition, ParameterRange, ObjectiveDef, SampleMethod,
+        )
+        from app.experiment.runner import run_experiment
+        from app.experiment.report_generator import generate_text_summary, generate_html_report
+
+        definition = ExperimentDefinition(
+            name=req.name,
+            description=req.description,
+            machine_type=req.machine_type,
+            parameter_ranges=[
+                ParameterRange(name=pr.name, min_value=pr.min_value, max_value=pr.max_value, step=pr.step)
+                for pr in req.parameter_ranges
+            ],
+            objectives=[
+                ObjectiveDef(name=o.name, minimize=o.minimize, weight=o.weight)
+                for o in req.objectives
+            ],
+            sample_method=SampleMethod(req.sample_method),
+            sample_count=req.sample_count,
+            max_concurrent=req.max_concurrent,
+            temperature_c=req.temperature_c,
+        )
+
+        result = run_experiment(definition, on_status=on_status)
+
+        text_report = generate_text_summary(result)
+        html_report = generate_html_report(result)
+        result.report_summary = text_report
+        result.report_html = html_report
+
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "complete",
+                    "stage": "complete",
+                    "progress": 1.0,
+                    "message": "Experiment complete",
+                    "result": {
+                        "experiment_id": result.experiment_id,
+                        "total_runs": result.total_runs,
+                        "successful_runs": result.successful_runs,
+                        "failed_runs": result.failed_runs,
+                        "pareto_front_size": len(result.pareto_ranked),
+                        "champion": {
+                            "run_id": result.champion.run_id,
+                            "evaluation_score": result.champion.evaluation_score,
+                            "parameters": result.champion.parameters,
+                            "objectives": result.champion.objective_values,
+                        } if result.champion else None,
+                        "report_summary": result.report_summary,
+                        "report_html": result.report_html,
+                    },
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    except Exception as exc:
+        logger.exception("Experiment job %s crashed", job_id)
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "failed",
+                    "stage": "crashed",
+                    "progress": 0.0,
+                    "message": str(exc),
+                    "errors": [str(exc)],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+
+@router.post("/experiment/define", tags=["experiment"])
+def define_experiment(payload: ExperimentDefineRequest):
+    """Validate an experiment definition and return estimated runtime."""
+    from app.experiment.models import ExperimentDefinition, ParameterRange, ObjectiveDef
+    n_objectives = len(payload.objectives) or 7
+    n_params = len(payload.parameter_ranges) or 12
+    return {
+        "status": "ok",
+        "machine_type": payload.machine_type,
+        "sample_count": payload.sample_count,
+        "objectives": n_objectives,
+        "parameters": n_params,
+        "description": f"Experiment '{payload.name}' ready: {payload.sample_count} variants, "
+                       f"{n_objectives} objectives, {n_params} parameters.",
+    }
+
+
+@router.post("/experiment/run", tags=["experiment"])
+def start_experiment(payload: ExperimentDefineRequest, background_tasks: BackgroundTasks):
+    """Launch an engineering experiment as a background job."""
+    job_id = f"exp_{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "init",
+            "progress": 0.0,
+            "message": "Experiment queued",
+            "errors": [],
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    background_tasks.add_task(_run_experiment_job, job_id, payload)
+    logger.info("Experiment job %s queued: '%s' (%d variants)", job_id, payload.name, payload.sample_count)
+    return {"status": "queued", "job_id": job_id}
+
+
+@router.get("/experiment/status/{job_id}", tags=["experiment"])
+def get_experiment_status(job_id: str):
+    """Poll experiment progress."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Experiment job {job_id} not found")
+    return ExperimentJobInfo(**{k: v for k, v in job.items() if k in ExperimentJobInfo.model_fields})
+
+
+@router.get("/experiment/result/{job_id}", tags=["experiment"])
+def get_experiment_result(job_id: str):
+    """Get the full experiment result."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Experiment job {job_id} not found")
+    if job.get("status") not in ("complete", "failed"):
+        raise HTTPException(status_code=400, detail=f"Experiment {job_id} is still {job.get('status')}")
+    return job
