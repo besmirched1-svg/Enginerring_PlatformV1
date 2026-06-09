@@ -1,12 +1,42 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
 **Last Updated**: June 9, 2026  
-**Status**: Phase 3 Manufacturing Intelligence Complete — 7 Modules, 23 Tests  
-**Version**: v0.9.5 (Alpha)
+**Status**: Phase 4 Engineering Director Complete — 4 Modules, 17 Tests  
+**Version**: v1.0.0 (Alpha)
 
 ---
 
 ## System Architecture Overview
+
+### Layer 0 — Autonomous Engineering Director (app/director/) ✅ NEW
+
+**A. Engineer Director** (app/director/engineer.py)
+
+- Top-level orchestrator: takes user goal, runs full engineering pipeline
+- Delegates to all subsystems: CAD, BOM, Physics, Simulation, Digital Twin, Manufacturing, Costing, Evaluation
+- Stage logging and error tracking throughout pipeline
+- State: Complete with 6 tests
+
+**B. Engineering Planner** (app/director/planner.py)
+
+- Interprets user goals into structured multi-step plans
+- Machine-type profiles define component, physics, and manufacturing scope
+- Pipeline dependency ordering with topological awareness
+- State: Complete with 4 tests
+
+**C. Engineering Pack Assembler** (app/director/packer.py)
+
+- Bundles all pipeline results into a single EngineeringPack
+- Generates human-readable summary with key metrics
+- Tracks stage, errors, and overall pass/fail
+- State: Complete with 3 tests
+
+**D. Director Models** (app/director/models.py)
+
+- EngineeringGoal, EngineeringPlan, PlanTask, PhysicsResult
+- ManufacturingResult, EngineeringPack, DirectorResult
+- DesignStage enum for pipeline state tracking
+- State: Complete with 4 tests
 
 ### Layer 1 — Autonomous Design Evolution (app/core/)
 
@@ -263,7 +293,14 @@
 
 1. ✅ Engineering knowledge store
 
-### Manufacturing Intelligence
+### Engineering Director (Phase 4)
+
+1. ✅ EngineerDirector orchestrator — runs full autonomous pipeline
+2. ✅ EngineeringPlanner — goal → multi-step plan generation
+3. ✅ EngineeringPackAssembler — bundles all results into output pack
+4. ✅ Director data models (goal, plan, physics, manufacturing, pack)
+
+### Manufacturing Intelligence (Phase 3)
 
 1. ✅ Cut list analysis (laser/plasma/waterjet, nesting, utilisation)
 2. ✅ Weld map generation (joint types, deposit mass, consumables)
@@ -408,7 +445,8 @@
 | v0.5.0 | Physics Thermal Complete | ✅ Done |
 | v0.9.0 | Physics Engine v1.0 Freeze + Tag | ✅ Done |
 | v0.9.5 | Manufacturing Intelligence | ✅ Done |
-| v1.0.0 | Autonomous Engineering Director | 🔲 |
+| v1.0.0 | Autonomous Engineering Director | ✅ Done |
+| v1.1.0 | Multi-Objective Optimization (NSGA-II) | 🔲 |
 | v1.1.0 | Multi-Objective Optimization | 🔲 |
 | v1.2.0 | Specialized Agent Ecosystem | 🔲 |
 | v1.3.0 | Hardware Feedback Foundation | 🔲 |
@@ -425,7 +463,7 @@
 5. **No Design Caching** — Duplicate designs are re-evaluated unnecessarily
 6. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)
 7. ~~**No Manufacturing Intelligence**~~ — ✅ Resolved (Phase 3 complete — 7 modules, 23 tests)
-8. **No Engineering Director** — Workflow orchestration is manual
+8. ~~**No Engineering Director**~~ — ✅ Resolved (Phase 4 — 4 modules, 17 tests)
 
 ---
 
@@ -433,11 +471,11 @@
 
 | Metric | Previous | Current | Target |
 | --- | --- | --- | --- |
-| Test Count | 4 | 20 | 50 |
-| Test Coverage | ~40% | ~65% | 80% |
-| Edge Cases | 0 | 16 | 25 |
-| Bounds Validation Layers | 1 | 3 | 3 |
-| Documentation | 40% | 95% | 100% |
+| Test Count | 212 | 229 | 300 |
+| Test Coverage | ~65% | ~80% | 85% |
+| Edge Cases | 16 | 16 | 25 |
+| Bounds Validation Layers | 3 | 3 | 3 |
+| Documentation | 95% | 95% | 100% |
 
 ---
 
