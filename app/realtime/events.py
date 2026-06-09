@@ -18,6 +18,7 @@ SWARM_NS = "/swarm"
 CAD_NS = "/cad"
 PLAN_NS = "/planner"
 DIRECTOR_NS = "/director"
+TELEMETRY_NS = "/telemetry"
 
 # Metrics
 _dropped_events = 0
@@ -125,6 +126,9 @@ async def route_event_to_socketio(event_type, payload):
 
         elif "director" in et:
             await emit_director_event(event_type, payload)
+
+        elif "telemetry" in et:
+            await emit_telemetry_event(event_type, payload)
 
         else:
             await emit_optimizer_event(event_type, payload)

@@ -3,6 +3,7 @@ import json
 import logging
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -16,6 +17,36 @@ router = APIRouter()
 LINEAGE_LOG_FILE = "outputs/revisions/lineage_history.json"
 ARCHIVE_ROOT = "outputs/revisions"
 _orchestrator_instance = None
+
+
+# Global telemetry service instances
+_telemetry_ingestor = None
+_telemetry_analyzer = None
+_telemetry_trigger = None
+
+
+def _get_telemetry_ingestor():
+    global _telemetry_ingestor
+    if _telemetry_ingestor is None:
+        from app.telemetry.ingestor import create_ingestor
+        _telemetry_ingestor = create_ingestor()
+    return _telemetry_ingestor
+
+
+def _get_telemetry_analyzer():
+    global _telemetry_analyzer
+    if _telemetry_analyzer is None:
+        from app.telemetry.analyzer import create_analyzer
+        _telemetry_analyzer = create_analyzer()
+    return _telemetry_analyzer
+
+
+def _get_telemetry_trigger():
+    global _telemetry_trigger
+    if _telemetry_trigger is None:
+        from app.telemetry.feedback import create_trigger
+        _telemetry_trigger = create_trigger()
+    return _telemetry_trigger
 
 
 def register_orchestrator_reference(orchestrator):
@@ -264,7 +295,6 @@ def get_successful_configs(machine_name: str, min_score: float = 0.75):
 
 import threading
 import time as time_module
-from datetime import datetime, timezone
 from pydantic import Field
 
 from app.core.events import publish as _publish_event
@@ -424,4 +454,217 @@ def get_director_result(job_id: str):
         "stage_log": result.stage_log,
         "errors": result.errors,
         "pack_summary": result.pack.summary if result.pack else "",
+    }
+
+
+# =====================================================================
+# Telemetry API — hardware feedback ingestion and deviation detection
+# =====================================================================
+#
+# POST /api/telemetry/session          -> create a new telemetry session
+# POST /api/telemetry/ingest           -> submit sensor readings
+# GET  /api/telemetry/sessions/{id}    -> get session details
+# POST /api/telemetry/sessions/{id}/close -> close a session
+# POST /api/telemetry/analyze/{id}     -> run deviation detection
+# GET  /api/telemetry/deviations/{id}  -> get a specific deviation
+# POST /api/telemetry/deviations/{id}/ack -> acknowledge a deviation
+# POST /api/telemetry/feedback/{id}    -> generate improvement triggers
+# =====================================================================
+
+
+class CreateSessionRequest(BaseModel):
+    machine_id: str
+    metadata: Dict[str, Any] = {}
+
+
+class SensorReadingPayload(BaseModel):
+    sensor_id: str
+    machine_id: str
+    component: str = ""
+    metric: str = ""
+    value: float = 0.0
+    unit: str = ""
+
+
+class IngestTelemetryRequest(BaseModel):
+    session_id: str
+    machine_id: str
+    readings: List[SensorReadingPayload] = []
+    source: str = "api"
+    metadata: Dict[str, Any] = {}
+
+
+class AnalyzeRequest(BaseModel):
+    predictions: Dict[str, float] = {}
+    tolerances: Dict[str, float] = {}
+
+
+@router.post("/telemetry/session", tags=["telemetry"])
+def create_telemetry_session(payload: CreateSessionRequest):
+    ingestor = _get_telemetry_ingestor()
+    session = ingestor.create_session(payload.machine_id, payload.metadata)
+    _publish_event("telemetry_session_created", {
+        "session_id": session.session_id,
+        "machine_id": session.machine_id,
+    })
+    return {
+        "session_id": session.session_id,
+        "machine_id": session.machine_id,
+        "status": session.status,
+        "start_time": session.start_time.isoformat(),
+    }
+
+
+@router.post("/telemetry/ingest", tags=["telemetry"])
+def ingest_telemetry(payload: IngestTelemetryRequest):
+    from app.telemetry.models import SensorReading, TelemetryRecord
+    from uuid import uuid4
+
+    ingestor = _get_telemetry_ingestor()
+    readings = [
+        SensorReading(
+            sensor_id=r.sensor_id,
+            machine_id=r.machine_id,
+            component=r.component,
+            metric=r.metric,
+            value=r.value,
+            unit=r.unit,
+        )
+        for r in payload.readings
+    ]
+    record = TelemetryRecord(
+        record_id=str(uuid4()),
+        machine_id=payload.machine_id,
+        session_id=payload.session_id,
+        source=payload.source,
+        readings=readings,
+        metadata=payload.metadata,
+    )
+    ingestor.ingest(record)
+    _publish_event("telemetry_ingested", {
+        "record_id": record.record_id,
+        "session_id": payload.session_id,
+        "reading_count": len(readings),
+    })
+    return {
+        "record_id": record.record_id,
+        "session_id": payload.session_id,
+        "reading_count": len(readings),
+        "status": "ingested",
+    }
+
+
+@router.get("/telemetry/sessions/{session_id}", tags=["telemetry"])
+def get_telemetry_session(session_id: str):
+    ingestor = _get_telemetry_ingestor()
+    session = ingestor.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    return {
+        "session_id": session.session_id,
+        "machine_id": session.machine_id,
+        "start_time": session.start_time.isoformat(),
+        "end_time": session.end_time.isoformat() if session.end_time else None,
+        "reading_count": session.reading_count,
+        "status": session.status,
+        "deviation_count": len(session.deviations),
+        "metadata": session.metadata,
+    }
+
+
+@router.post("/telemetry/sessions/{session_id}/close", tags=["telemetry"])
+def close_telemetry_session(session_id: str):
+    ingestor = _get_telemetry_ingestor()
+    session = ingestor.close_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    _publish_event("telemetry_session_closed", {
+        "session_id": session_id,
+        "machine_id": session.machine_id,
+    })
+    return {"session_id": session_id, "status": "closed"}
+
+
+@router.post("/telemetry/analyze/{session_id}", tags=["telemetry"])
+def analyze_telemetry(session_id: str, payload: AnalyzeRequest):
+    ingestor = _get_telemetry_ingestor()
+    analyzer = _get_telemetry_analyzer()
+    session = ingestor.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    readings = ingestor.get_readings(session_id)
+    session._readings = readings
+    deviations = analyzer.analyze(session, payload.predictions, payload.tolerances)
+    for d in deviations:
+        _publish_event("telemetry_deviation_detected", {
+            "session_id": session_id,
+            "machine_id": d.machine_id,
+            "component": d.component,
+            "metric": d.metric,
+            "deviation_pct": d.deviation_pct,
+            "severity": d.severity,
+        })
+    return {
+        "session_id": session_id,
+        "deviations_found": len(deviations),
+        "deviations": [
+            {
+                "component": d.component,
+                "metric": d.metric,
+                "actual_value": d.actual_value,
+                "predicted_value": d.predicted_value,
+                "deviation_pct": d.deviation_pct,
+                "severity": d.severity,
+                "description": d.description,
+                "detected_at": d.detected_at.isoformat(),
+                "acknowledged": d.acknowledged,
+            }
+            for d in deviations
+        ],
+    }
+
+
+@router.get("/telemetry/deviations/{deviation_id}", tags=["telemetry"])
+def get_deviation(deviation_id: str):
+    analyzer = _get_telemetry_analyzer()
+    dev = analyzer.get_deviation(deviation_id)
+    if dev is None:
+        raise HTTPException(status_code=404, detail=f"Deviation {deviation_id} not found")
+    return {
+        "machine_id": dev.machine_id,
+        "component": dev.component,
+        "metric": dev.metric,
+        "actual_value": dev.actual_value,
+        "predicted_value": dev.predicted_value,
+        "deviation_pct": dev.deviation_pct,
+        "severity": dev.severity,
+        "description": dev.description,
+        "detected_at": dev.detected_at.isoformat(),
+        "acknowledged": dev.acknowledged,
+    }
+
+
+@router.post("/telemetry/deviations/{deviation_id}/ack", tags=["telemetry"])
+def acknowledge_deviation(deviation_id: str):
+    analyzer = _get_telemetry_analyzer()
+    ok = analyzer.acknowledge(deviation_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Deviation {deviation_id} not found")
+    return {"status": "acknowledged", "deviation_id": deviation_id}
+
+
+@router.post("/telemetry/feedback/{session_id}", tags=["telemetry"])
+def generate_feedback(session_id: str):
+    ingestor = _get_telemetry_ingestor()
+    trigger = _get_telemetry_trigger()
+    session = ingestor.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    triggers = trigger.evaluate(session.deviations)
+    for t in triggers:
+        _publish_event("telemetry_feedback_generated", t)
+    return {
+        "session_id": session_id,
+        "triggers_generated": len(triggers),
+        "triggers": triggers,
     }

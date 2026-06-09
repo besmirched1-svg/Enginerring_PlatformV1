@@ -244,3 +244,13 @@ DIRECTOR_STAGE = "director_stage"
 DIRECTOR_STAGE_COMPLETE = "director_stage_complete"
 DIRECTOR_COMPLETE = "director_complete"
 DIRECTOR_FAILED = "director_failed"
+
+# ---------------------------------------------------------------------------
+# Telemetry event type constants
+# ---------------------------------------------------------------------------
+
+TELEMETRY_INGESTED = "telemetry_ingested"
+TELEMETRY_SESSION_CREATED = "telemetry_session_created"
+TELEMETRY_SESSION_CLOSED = "telemetry_session_closed"
+TELEMETRY_DEVIATION_DETECTED = "telemetry_deviation_detected"
+TELEMETRY_FEEDBACK_GENERATED = "telemetry_feedback_generated"
