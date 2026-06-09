@@ -8,9 +8,10 @@ core (Foundation, CAD/Graphs, Hemp Domain, Genetic Optimisation, Autonomous Dire
 Real-Time Telemetry, Hardware Feedback Loop) is complete, followed by the V2 program:
 Phase 8 Experiment Laboratory, Phase 9 Multi-Objective Evolution (NSGA-II), Phase 10
 Autonomous Engineering Department + Platform Operations (10.5-10.9), Phase 11 Factory
-Intelligence, Phase 12 Economic Engineering, and now Phase 13 Knowledge Reasoning.
+Intelligence, Phase 12 Economic Engineering, Phase 13 Knowledge Reasoning, and now
+Phase 14 Autonomous Research Agent.
 
-Current: **v2.3.0**, Phase 13 complete, 784 tests passing (1 skipped).
+Current: **v2.4.0**, Phase 14 complete, 822 tests passing (1 skipped).
 
 ## History
 
@@ -40,11 +41,29 @@ Current: **v2.3.0**, Phase 13 complete, 784 tests passing (1 skipped).
    confidence/lift), Wilson-based confidence scoring, recommendation engine, and
    knowledge-driven adaptive mutation strategies; reasons over `KnowledgeStore` design
    outcomes; CLI and API.
-9. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
-   Operations), v2.1.0 (Factory Intelligence), v2.2.0 (Economic Engineering), v2.3.0
-   (Knowledge Reasoning).
+9. **Phase 14 - Autonomous Research Agent (v2.4.0)** - `app/research/` package:
+   source-agnostic (text-in, no scraping) ingestion of patents/papers/manuals/drawings,
+   deterministic lexicon+regex extraction (entities, numeric parameters, causal relations),
+   knowledge graph (merge-on-repeat nodes, save/load), `ResearchAgent` orchestrator;
+   persists facts to `KnowledgeStore`; CLI and API.
+10. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
+    Operations), v2.1.0 (Factory Intelligence), v2.2.0 (Economic Engineering), v2.3.0
+    (Knowledge Reasoning), v2.4.0 (Autonomous Research Agent).
 
-## Work Done (Phase 13 Knowledge Reasoning, this session)
+## Work Done (Phase 14 Autonomous Research Agent, this session)
+
+- `app/research/` - new package: `models.py`, `extraction.py` (lexicons + regex; numeric
+  parameter regex uses a negative-lookahead unit boundary so `%` matches and `c` does not
+  fire inside `cubic`), `ingestion.py`, `knowledge_graph.py` (deterministic merge-on-repeat
+  node ids, edge strengthening, JSON save/load), `agent.py` (`ResearchAgent`), `__init__.py`.
+- Source-agnostic by design: documents are supplied as text; no live scraping/network.
+- `app/api/routes.py` - `POST /api/research/ingest` and `/api/research/graph`.
+- `app/runtime/cli.py` - `research ingest` subcommand (text/file, optional persist + graph-out).
+- `docs/ROADMAP_V2.md` - Phase 14 marked DONE.
+- `tests/test_research.py` - 38 tests (document model, entity/parameter/relation extraction,
+  ingestion, KnowledgeStore persistence, knowledge graph, agent, API).
+
+## Work Done (Phase 13 Knowledge Reasoning, prior in this session)
 
 - `app/reasoning/` - new package: `models.py`, `confidence.py` (Wilson interval),
   `pattern_mining.py` (Pearson correlations + range success patterns), `rule_extraction.py`
@@ -97,9 +116,9 @@ Existing factory package modules (committed at HEAD, completed this session):
 ## Technical Details
 
 - **Branch**: `pre-production-backup`; remote origin -> `gitlab.com/sheepleunite-group/your-repo.git`
-- **Version**: v2.3.0
-- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-13 complete
-- **Testing**: 784 passing, 1 skipped (Redis-dependent), 0 failures
+- **Version**: v2.4.0
+- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-14 complete
+- **Testing**: 822 passing, 1 skipped (Redis-dependent), 0 failures
 - **Docs lint**: `.markdownlint.json` formalises house conventions (MD025 repeated H1
   dividers, MD040 plain fences) so established docs are not flagged
 - **Conventions**: dataclass models; loggers named `engine.<subsystem>.<component>`; no
@@ -112,6 +131,8 @@ Existing factory package modules (committed at HEAD, completed this session):
 
 ## Important Files
 
+- `app/research/` - Phase 14 package: models, extraction, ingestion, knowledge_graph, agent
+  (`ResearchAgent`); source-agnostic, persists facts to KnowledgeStore
 - `app/reasoning/` - Phase 13 package: models, confidence, pattern_mining, rule_extraction,
   recommendation, adaptive_mutation, engine (`KnowledgeReasoner`)
 - `app/knowledge/knowledge_store.py` - NDJSON KnowledgeStore + basic KnowledgeReasoningEngine
@@ -135,15 +156,17 @@ Existing factory package modules (committed at HEAD, completed this session):
 
 ## Next Steps
 
-Phase 14 - Autonomous Research Agent (v2.6.x target): learn from external engineering
-knowledge.
+Phase 15 - Autonomous Manufacturing & Deployment (v2.7.x target): close the loop between
+digital and physical engineering.
 
-Deliverables: patent ingestion, engineering paper ingestion, technical manuals, historical
-drawings, knowledge graph integration. Feed ingested knowledge into the KnowledgeStore and
-the Phase 13 reasoning layer. Add CLI + API + tests, following the established
-package-per-phase pattern (`app/factory/`, `app/economics/`, `app/reasoning/`).
+Deliverables: CNC output, cut lists, weld maps, QA integration, commissioning support, field
+telemetry. Build on the existing `app/manufacturing/` modules (cutlists, weldmaps,
+fabrication, machining) and the telemetry subsystem. Add CLI + API + tests, following the
+established package-per-phase pattern. Note: physical-output/field-integration concerns are
+an outward-facing opt-in - build the framework and formats, not live machine wiring, unless
+asked.
 
 ## Checkpoint
 
-Phase 13 Knowledge Reasoning Complete - v2.3.0
+Phase 14 Autonomous Research Agent Complete - v2.4.0
 </content>

@@ -1334,6 +1334,69 @@ def reasoning_strategy(payload: ReasoningStrategyRequest):
         raise HTTPException(status_code=400, detail=f"Reasoning strategy failed: {exc}")
 
 
+# =====================================================================
+# Autonomous Research Agent API - Phase 14
+# =====================================================================
+#
+# POST /api/research/ingest  -> extract entities/parameters/facts from one doc
+# POST /api/research/graph   -> ingest several docs, return graph + summary
+# =====================================================================
+
+
+class ResearchDocumentModel(BaseModel):
+    title: str = ""
+    doc_type: str = "other"
+    text: str = ""
+    source: str = ""
+    authors: List[str] = []
+    year: Optional[int] = None
+
+
+class ResearchGraphRequest(BaseModel):
+    documents: List[ResearchDocumentModel] = []
+
+
+def _to_research_doc(model: ResearchDocumentModel):
+    from app.research import ResearchDocument
+    return ResearchDocument(
+        title=model.title, doc_type=model.doc_type, text=model.text,
+        source=model.source, authors=list(model.authors), year=model.year,
+    )
+
+
+@router.post("/research/ingest", tags=["research"])
+def research_ingest(payload: ResearchDocumentModel):
+    """Extract entities, parameters, and facts from a single document."""
+    from app.research import ingest_document
+
+    try:
+        result = ingest_document(_to_research_doc(payload))
+        return {"status": "ok", "result": result.to_dict()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid document: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Research ingestion failed: {exc}")
+
+
+@router.post("/research/graph", tags=["research"])
+def research_graph(payload: ResearchGraphRequest):
+    """Ingest several documents and return the knowledge graph and summary."""
+    from app.research import ResearchAgent
+
+    try:
+        agent = ResearchAgent()
+        agent.ingest_many([_to_research_doc(d) for d in payload.documents])
+        return {
+            "status": "ok",
+            "summary": agent.summary(),
+            "graph": agent.graph.to_dict(),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid document: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Research graph build failed: {exc}")
+
+
 # Reuse the same _jobs_lock and _jobs dict from Director API
 
 def _run_experiment_job(job_id: str, req: ExperimentDefineRequest) -> None:

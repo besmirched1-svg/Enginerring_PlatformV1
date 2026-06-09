@@ -1001,6 +1001,73 @@ def cmd_reasoning_recommend(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# CLI: research commands (Phase 14 Autonomous Research Agent)
+# ---------------------------------------------------------------------------
+
+def cmd_research_ingest(args: argparse.Namespace) -> int:
+    from app.research import ResearchDocument, ResearchAgent
+
+    if args.file:
+        try:
+            with open(args.file, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError as exc:
+            print(f"  Error reading file: {exc}")
+            return 1
+    else:
+        text = args.text or ""
+
+    if not text.strip():
+        print("  Error: provide --text or --file with document content")
+        return 1
+
+    store = None
+    if args.persist:
+        from app.knowledge.knowledge_store import KnowledgeStore
+        store = KnowledgeStore(storage_path=args.knowledge_base)
+
+    agent = ResearchAgent(knowledge_store=store)
+    doc = ResearchDocument(
+        title=args.title or "(untitled)",
+        doc_type=args.type,
+        text=text,
+        source=args.source,
+    )
+    result = agent.ingest(doc, persist=args.persist)
+
+    print()
+    print("  Research Ingestion")
+    print("  " + "=" * 56)
+    print(f"  Document:   {doc.title} [{doc.doc_type.value}]")
+    print(f"  Entities:   {len(result.entities)}")
+    print(f"  Parameters: {len(result.parameters)}")
+    print(f"  Facts:      {len(result.facts)}")
+    if args.persist:
+        print(f"  Persisted facts to knowledge base: {args.knowledge_base}")
+    print()
+    print("  Entities:")
+    for e in result.entities[:15]:
+        print(f"    {e.entity_type.value:10s} {e.name:20s} mentions={e.mentions}  conf={e.confidence:.2f}")
+    print()
+    print("  Parameters:")
+    for p in result.parameters[:15]:
+        print(f"    {p.name:24s} {p.value:>10.3f} {p.unit}")
+    print()
+    print("  Facts:")
+    for f in result.facts[:15]:
+        print(f"    {f.subject} -- {f.predicate} --> {f.obj}  (conf {f.confidence:.2f})")
+    print()
+    print("  Knowledge graph:")
+    stats = agent.graph.stats()
+    print(f"    nodes={stats['node_count']}  edges={stats['edge_count']}  by_type={stats['nodes_by_type']}")
+    if args.graph_out:
+        agent.graph.save(args.graph_out)
+        print(f"    saved graph to {args.graph_out}")
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -1124,6 +1191,21 @@ def main() -> int:
     reason_sub.choices["recommend"].add_argument(
         "--parameters", default="", help='Current parameters as JSON, e.g. \'{"wall_thickness": 3.0}\'')
 
+    # research
+    research_p = subparsers.add_parser("research", help="Autonomous research agent commands")
+    research_sub = research_p.add_subparsers(dest="research_cmd")
+    ingest_p = research_sub.add_parser("ingest", help="Ingest a document and extract knowledge")
+    ingest_p.add_argument("--text", default="", help="Document text")
+    ingest_p.add_argument("--file", default="", help="Path to a text file to ingest")
+    ingest_p.add_argument("--type", default="other",
+                          choices=["patent", "paper", "manual", "drawing", "other"],
+                          help="Document type")
+    ingest_p.add_argument("--title", default="", help="Document title")
+    ingest_p.add_argument("--source", default="", help="Document source/citation")
+    ingest_p.add_argument("--persist", action="store_true", help="Persist facts to the knowledge base")
+    ingest_p.add_argument("--knowledge-base", default="./knowledge_base", help="Knowledge base path")
+    ingest_p.add_argument("--graph-out", default="", help="Save the knowledge graph to this path")
+
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging")
 
@@ -1194,6 +1276,11 @@ def main() -> int:
             "recommend": cmd_reasoning_recommend,
         }
         return reasoning_map.get(args.reasoning_cmd, lambda a: print("Unknown reasoning command"))(args)
+    elif args.command == "research":
+        research_map = {
+            "ingest": cmd_research_ingest,
+        }
+        return research_map.get(args.research_cmd, lambda a: print("Unknown research command"))(args)
     elif args.command == "data-dir":
         return cmd_data_dir(args)
     elif args.command == "dashboard":

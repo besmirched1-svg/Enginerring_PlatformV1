@@ -392,19 +392,47 @@ Deliverables:
 
 # v2.6.x
 
-## Phase 14 — Autonomous Research Agent
+## Phase 14 — Autonomous Research Agent (DONE)
 
 Goal:
 
 Learn from external engineering knowledge.
 
+Design note: ingestion is source-agnostic - documents are supplied as text
+(no live scraping/network), keeping extraction deterministic, testable, and
+free of external-source security concerns. Live source wiring is a deliberate
+future opt-in.
+
 Deliverables:
 
-* Patent ingestion
-* Engineering paper ingestion
-* Technical manuals
-* Historical drawings
-* Knowledge graph integration
+* Research models (`app/research/models.py`):
+  * `DocumentType` (patent/paper/manual/drawing/other), `EntityType` (material/component/process/parameter/metric)
+  * `ResearchDocument`, `ExtractedEntity`, `ExtractedParameter`, `KnowledgeFact`, `IngestionResult` - all with `to_dict()`
+
+* Deterministic extraction (`app/research/extraction.py`, no external NLP deps):
+  * Engineering lexicons (materials, components, processes); `extract_entities()` with mention counts
+  * `extract_parameters()` - numeric value + unit with inferred name (negative-lookahead unit boundary handles `%`)
+  * `extract_relations()` - subject-predicate-object triples from causal verbs
+
+* Ingestion (`app/research/ingestion.py`):
+  * `ingest_document()` - entities, parameters, and facts (mentions/has_value/relations) with source-typed confidence (patents/papers weighted higher)
+  * `ingest_to_store()` - persists facts to the KnowledgeStore as lessons for the Phase 13 reasoning layer
+
+* Knowledge graph (`app/research/knowledge_graph.py`):
+  * `KnowledgeGraph` with `KnowledgeNode`/`KnowledgeEdge`, deterministic node ids (merge on repeat), edge strengthening
+  * `add_ingestion()`, `neighbors()`, `most_connected()`, `stats()`, JSON `save()`/`load()`
+
+* Research agent (`app/research/agent.py`):
+  * `ResearchAgent` - `ingest()`/`ingest_many()` (optional KnowledgeStore persistence), `query_entity()`, `summary()`, accumulates the knowledge graph
+
+* API (`app/api/routes.py`):
+  * `POST /api/research/ingest` - extract from one document
+  * `POST /api/research/graph` - ingest several documents, return graph + summary
+
+* CLI (`app/runtime/cli.py`):
+  * `research ingest --text/--file --type --title [--persist] [--graph-out]` - ingest and report
+
+* 38 research tests, 822 total passing (1 skipped)
 
 ---
 
