@@ -343,7 +343,7 @@ Deliverables:
 
 # v2.5.x
 
-## Phase 13 — Knowledge Reasoning
+## Phase 13 — Knowledge Reasoning (DONE)
 
 Goal:
 
@@ -351,11 +351,42 @@ Transform historical data into engineering wisdom.
 
 Deliverables:
 
-* Pattern mining
-* Rule extraction
-* Recommendation engine
-* Confidence scoring
-* Adaptive mutation strategies
+* Reasoning models (`app/reasoning/models.py`):
+  * `OutcomeRecord` (normalised parameters + score + success), `ParameterCorrelation`, `RangePattern`, `EngineeringRule`, `Recommendation`, `ParameterStrategy`, `AdaptiveMutationStrategy`, aggregate `ReasoningReport` - all with `to_dict()`
+
+* Confidence scoring (`app/reasoning/confidence.py`):
+  * `wilson_lower_bound()` - Wilson score interval lower bound (honest for small samples)
+  * `sample_confidence()` / `correlation_confidence()` - sample-sufficiency and effect-size scoring
+
+* Pattern mining (`app/reasoning/pattern_mining.py`):
+  * `normalize_outcomes()` - adapts KnowledgeStore design outcomes (and flat dicts)
+  * `mine_correlations()` - Pearson correlation of each parameter with score
+  * `mine_range_patterns()` - per-parameter value bins with success rate and Wilson confidence
+
+* Rule extraction (`app/reasoning/rule_extraction.py`):
+  * `extract_rules()` - IF parameter-in-range THEN success/failure rules with association-rule metrics (support, confidence, lift), filtered by thresholds
+
+* Recommendation engine (`app/reasoning/recommendation.py`):
+  * `recommend()` - pulls parameters toward high-success ranges, pushes out of high-failure ranges, ranked by confidence and expected benefit
+
+* Adaptive mutation strategies (`app/reasoning/adaptive_mutation.py`):
+  * `build_adaptive_strategy()` - per-parameter target band and exploration scale (tightens as confidence rises), bound-aware
+  * `adaptive_mutate()` - deterministic knowledge-biased mutation toward target bands with scaled exploration noise
+
+* Orchestrator (`app/reasoning/engine.py`):
+  * `KnowledgeReasoner` - `from_store()`, `analyze()`, `recommend()`, `adaptive_strategy()`; `reason_over_store()` convenience
+
+* API (`app/api/routes.py`):
+  * `POST /api/reasoning/analyze` - correlations, patterns, rules
+  * `POST /api/reasoning/recommend` - parameter adjustment recommendations
+  * `POST /api/reasoning/strategy` - adaptive mutation strategy
+
+* CLI (`app/runtime/cli.py`):
+  * `reasoning patterns` - correlations and success ranges from the knowledge base
+  * `reasoning rules` - extracted IF-THEN rules
+  * `reasoning recommend --parameters` - recommendations for a current design
+
+* 42 reasoning tests, 784 total passing (1 skipped)
 
 ---
 

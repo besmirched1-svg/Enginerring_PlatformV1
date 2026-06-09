@@ -917,6 +917,90 @@ def cmd_economics_factory(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# CLI: reasoning commands (Phase 13 Knowledge Reasoning)
+# ---------------------------------------------------------------------------
+
+def _load_reasoner(args: argparse.Namespace):
+    from app.knowledge.knowledge_store import KnowledgeStore
+    from app.reasoning import KnowledgeReasoner
+    store = KnowledgeStore(storage_path=args.knowledge_base)
+    return KnowledgeReasoner.from_store(store)
+
+
+def cmd_reasoning_patterns(args: argparse.Namespace) -> int:
+    reasoner = _load_reasoner(args)
+    report = reasoner.analyze()
+    print()
+    print("  Knowledge Reasoning - Patterns")
+    print("  " + "=" * 56)
+    print(f"  Outcomes analysed: {report.sample_count}")
+    print(f"  Overall success rate: {report.success_rate*100:.1f}%")
+    if not report.sample_count:
+        print("  (no design outcomes in knowledge base)")
+        print()
+        return 0
+    print()
+    print("  Parameter correlations with score:")
+    for c in report.correlations[:10]:
+        print(f"    {c.parameter:20s} r={c.correlation:+.3f}  {c.direction:10s}  "
+              f"n={c.sample_count}  conf={c.confidence:.2f}")
+    print()
+    print("  Top success ranges:")
+    for p in report.patterns[:8]:
+        print(f"    {p.parameter:20s} [{p.low:.2f}, {p.high:.2f}]  "
+              f"success={p.success_rate*100:.0f}%  n={p.sample_count}  conf={p.confidence:.2f}")
+    print()
+    return 0
+
+
+def cmd_reasoning_rules(args: argparse.Namespace) -> int:
+    reasoner = _load_reasoner(args)
+    report = reasoner.analyze(min_confidence=args.min_confidence, min_lift=args.min_lift)
+    print()
+    print("  Knowledge Reasoning - Extracted Rules")
+    print("  " + "=" * 56)
+    print(f"  Outcomes analysed: {report.sample_count}")
+    if not report.rules:
+        print("  (no rules met the confidence/lift thresholds)")
+        print()
+        return 0
+    print()
+    for r in report.rules[:15]:
+        print(f"    [{r.consequent:7s}] {r.description}")
+        print(f"              support={r.support:.2f}  conf={r.confidence:.2f}  "
+              f"lift={r.lift:.2f}  n={r.sample_count}")
+    print()
+    return 0
+
+
+def cmd_reasoning_recommend(args: argparse.Namespace) -> int:
+    import json as _json
+    reasoner = _load_reasoner(args)
+    try:
+        current = _json.loads(args.parameters) if args.parameters else {}
+    except _json.JSONDecodeError:
+        print("  Error: --parameters must be valid JSON, e.g. '{\"wall_thickness\": 3.0}'")
+        return 1
+    recs = reasoner.recommend(current, min_confidence=args.min_confidence, min_lift=args.min_lift)
+    print()
+    print("  Knowledge Reasoning - Recommendations")
+    print("  " + "=" * 56)
+    print(f"  Current parameters: {current}")
+    if not recs:
+        print("  (no recommendations available)")
+        print()
+        return 0
+    print()
+    for r in recs:
+        cur = "n/a" if r.current_value is None else f"{r.current_value:.3f}"
+        print(f"    {r.parameter:20s} {r.action:8s} {cur} -> {r.suggested_value:.3f}  "
+              f"(benefit {r.expected_benefit:+.2f}, conf {r.confidence:.2f})")
+        print(f"              {r.reasoning}")
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -1027,6 +1111,19 @@ def main() -> int:
     analyze_ep.add_argument("--power", type=float, default=120.0, help="Plant power draw kW")
     analyze_ep.add_argument("--product-rate", type=float, default=800.0, help="Product rate kg/hr")
 
+    # reasoning
+    reason_p = subparsers.add_parser("reasoning", help="Knowledge reasoning commands")
+    reason_sub = reason_p.add_subparsers(dest="reasoning_cmd")
+    for name, help_text in (("patterns", "Mine correlations and success ranges"),
+                            ("rules", "Extract IF-THEN engineering rules"),
+                            ("recommend", "Recommend parameter adjustments")):
+        rp = reason_sub.add_parser(name, help=help_text)
+        rp.add_argument("--knowledge-base", default="./knowledge_base", help="Knowledge base path")
+        rp.add_argument("--min-confidence", type=float, default=0.6, help="Minimum rule confidence")
+        rp.add_argument("--min-lift", type=float, default=1.05, help="Minimum rule lift")
+    reason_sub.choices["recommend"].add_argument(
+        "--parameters", default="", help='Current parameters as JSON, e.g. \'{"wall_thickness": 3.0}\'')
+
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging")
 
@@ -1090,6 +1187,13 @@ def main() -> int:
             "factory": cmd_economics_factory,
         }
         return economics_map.get(args.economics_cmd, lambda a: print("Unknown economics command"))(args)
+    elif args.command == "reasoning":
+        reasoning_map = {
+            "patterns": cmd_reasoning_patterns,
+            "rules": cmd_reasoning_rules,
+            "recommend": cmd_reasoning_recommend,
+        }
+        return reasoning_map.get(args.reasoning_cmd, lambda a: print("Unknown reasoning command"))(args)
     elif args.command == "data-dir":
         return cmd_data_dir(args)
     elif args.command == "dashboard":

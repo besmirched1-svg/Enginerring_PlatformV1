@@ -8,9 +8,9 @@ core (Foundation, CAD/Graphs, Hemp Domain, Genetic Optimisation, Autonomous Dire
 Real-Time Telemetry, Hardware Feedback Loop) is complete, followed by the V2 program:
 Phase 8 Experiment Laboratory, Phase 9 Multi-Objective Evolution (NSGA-II), Phase 10
 Autonomous Engineering Department + Platform Operations (10.5-10.9), Phase 11 Factory
-Intelligence, and now Phase 12 Economic Engineering.
+Intelligence, Phase 12 Economic Engineering, and now Phase 13 Knowledge Reasoning.
 
-Current: **v2.2.0**, Phase 12 complete, 742 tests passing (1 skipped).
+Current: **v2.3.0**, Phase 13 complete, 784 tests passing (1 skipped).
 
 ## History
 
@@ -35,10 +35,31 @@ Current: **v2.2.0**, Phase 12 complete, 742 tests passing (1 skipped).
    (CAPEX), operating cost (OPEX), maintenance (scheduled + MTBF-driven), life-cycle cost
    (NPV), cost per kilogram, ownership modelling (TCO/payback/ROI/NPV/IRR); factory
    integration via `analyze_factory_economics`; CLI and API.
-8. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
-   Operations), v2.1.0 (Factory Intelligence), v2.2.0 (Economic Engineering).
+8. **Phase 13 - Knowledge Reasoning (v2.3.0)** - `app/reasoning/` package: Pearson
+   correlation mining, success-range patterns, association-rule extraction (support/
+   confidence/lift), Wilson-based confidence scoring, recommendation engine, and
+   knowledge-driven adaptive mutation strategies; reasons over `KnowledgeStore` design
+   outcomes; CLI and API.
+9. **Tags** - v0.3.0 through v1.4.0 (core), v1.5.0, v1.6.0, v1.7.x, v2.0.0 (Platform
+   Operations), v2.1.0 (Factory Intelligence), v2.2.0 (Economic Engineering), v2.3.0
+   (Knowledge Reasoning).
 
-## Work Done (Phase 12 Economic Engineering, this session)
+## Work Done (Phase 13 Knowledge Reasoning, this session)
+
+- `app/reasoning/` - new package: `models.py`, `confidence.py` (Wilson interval),
+  `pattern_mining.py` (Pearson correlations + range success patterns), `rule_extraction.py`
+  (IF-THEN rules with support/confidence/lift), `recommendation.py`, `adaptive_mutation.py`
+  (knowledge-biased mutation), `engine.py` (`KnowledgeReasoner` orchestrator), `__init__.py`.
+- Builds on the existing `app/knowledge/knowledge_store.py` (reads design_outcomes via
+  `KnowledgeReasoner.from_store`); the older basic `KnowledgeReasoningEngine` is left intact.
+- `app/api/routes.py` - `POST /api/reasoning/analyze`, `/recommend`, `/strategy` (accept
+  outcomes in the body, so they are self-contained and testable).
+- `app/runtime/cli.py` - `reasoning patterns/rules/recommend` subcommands (read knowledge base).
+- `docs/ROADMAP_V2.md` - Phase 13 marked DONE.
+- `tests/test_reasoning.py` - 42 tests (confidence, normalisation, correlations, patterns,
+  rules, recommendations, adaptive mutation, engine, API).
+
+## Work Done (Phase 12 Economic Engineering, prior in this session)
 
 - `app/economics/` - new package: `models.py` (assumptions + result dataclasses),
   `capital.py`, `operating.py`, `maintenance.py`, `lifecycle.py` (NPV/EAC/IRR primitives),
@@ -76,9 +97,9 @@ Existing factory package modules (committed at HEAD, completed this session):
 ## Technical Details
 
 - **Branch**: `pre-production-backup`; remote origin -> `gitlab.com/sheepleunite-group/your-repo.git`
-- **Version**: v2.2.0
-- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-12 complete
-- **Testing**: 742 passing, 1 skipped (Redis-dependent), 0 failures
+- **Version**: v2.3.0
+- **Roadmap**: `docs/ROADMAP_V2.md` - 5 layers, 18 phases; Phases 1-13 complete
+- **Testing**: 784 passing, 1 skipped (Redis-dependent), 0 failures
 - **Docs lint**: `.markdownlint.json` formalises house conventions (MD025 repeated H1
   dividers, MD040 plain fences) so established docs are not flagged
 - **Conventions**: dataclass models; loggers named `engine.<subsystem>.<component>`; no
@@ -91,6 +112,12 @@ Existing factory package modules (committed at HEAD, completed this session):
 
 ## Important Files
 
+- `app/reasoning/` - Phase 13 package: models, confidence, pattern_mining, rule_extraction,
+  recommendation, adaptive_mutation, engine (`KnowledgeReasoner`)
+- `app/knowledge/knowledge_store.py` - NDJSON KnowledgeStore + basic KnowledgeReasoningEngine
+  that Phase 13 reasons over (design_outcomes)
+- `app/core/mutation.py` - rule-based mutation engine + `PARAMETER_BOUNDS` (the adaptive
+  mutation strategy is bound-aware and complements this)
 - `app/economics/` - Phase 12 package: models, capital, operating, maintenance, lifecycle,
   analysis (factory bridge via `analyze_factory_economics`)
 - `app/manufacturing/costing.py` - existing build/CAPEX estimator that Phase 12 economics
@@ -108,15 +135,15 @@ Existing factory package modules (committed at HEAD, completed this session):
 
 ## Next Steps
 
-Phase 13 - Knowledge Reasoning (v2.5.x target): transform historical data into
-engineering wisdom.
+Phase 14 - Autonomous Research Agent (v2.6.x target): learn from external engineering
+knowledge.
 
-Deliverables: pattern mining, rule extraction, recommendation engine, confidence scoring,
-adaptive mutation strategies. Build on the existing KnowledgeStore (NDJSON) and champion
-lineage; feed recommendations back into the mutation/optimisation loops. Add CLI + API +
-tests, following the `app/factory/` and `app/economics/` package pattern.
+Deliverables: patent ingestion, engineering paper ingestion, technical manuals, historical
+drawings, knowledge graph integration. Feed ingested knowledge into the KnowledgeStore and
+the Phase 13 reasoning layer. Add CLI + API + tests, following the established
+package-per-phase pattern (`app/factory/`, `app/economics/`, `app/reasoning/`).
 
 ## Checkpoint
 
-Phase 12 Economic Engineering Complete - v2.2.0
+Phase 13 Knowledge Reasoning Complete - v2.3.0
 </content>

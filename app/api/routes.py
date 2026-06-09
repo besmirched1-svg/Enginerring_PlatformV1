@@ -1234,6 +1234,106 @@ def economics_factory(payload: EconomicsFactoryRequest):
         raise HTTPException(status_code=400, detail=f"Factory economic analysis failed: {exc}")
 
 
+# =====================================================================
+# Knowledge Reasoning API - Phase 13
+# =====================================================================
+#
+# POST /api/reasoning/analyze    -> correlations, patterns, rules
+# POST /api/reasoning/recommend  -> parameter adjustment recommendations
+# POST /api/reasoning/strategy   -> adaptive mutation strategy
+# =====================================================================
+
+
+class OutcomeModel(BaseModel):
+    parameters: Dict[str, float] = {}
+    score: float = 0.0
+    outcome_id: str = ""
+
+
+class ReasoningAnalyzeRequest(BaseModel):
+    outcomes: List[OutcomeModel] = []
+    bins: int = 4
+    min_confidence: float = 0.6
+    min_lift: float = 1.05
+    success_threshold: float = 0.7
+
+
+class ReasoningRecommendRequest(BaseModel):
+    outcomes: List[OutcomeModel] = []
+    current_parameters: Dict[str, float] = {}
+    bins: int = 4
+    min_confidence: float = 0.6
+    min_lift: float = 1.05
+    success_threshold: float = 0.7
+    max_recommendations: int = 5
+
+
+class ReasoningStrategyRequest(BaseModel):
+    outcomes: List[OutcomeModel] = []
+    bounds: Dict[str, Dict[str, float]] = {}
+    bins: int = 4
+    success_threshold: float = 0.7
+
+
+def _reasoner_from_outcomes(outcomes: List[OutcomeModel], success_threshold: float):
+    from app.reasoning import KnowledgeReasoner, OutcomeRecord
+    records = [
+        OutcomeRecord(
+            parameters=dict(o.parameters),
+            score=o.score,
+            outcome_id=o.outcome_id,
+            success=o.score >= success_threshold,
+        )
+        for o in outcomes
+    ]
+    return KnowledgeReasoner(records, success_threshold=success_threshold)
+
+
+@router.post("/reasoning/analyze", tags=["reasoning"])
+def reasoning_analyze(payload: ReasoningAnalyzeRequest):
+    """Mine correlations, success ranges, and IF-THEN rules from outcomes."""
+    try:
+        reasoner = _reasoner_from_outcomes(payload.outcomes, payload.success_threshold)
+        report = reasoner.analyze(
+            bins=payload.bins,
+            min_confidence=payload.min_confidence,
+            min_lift=payload.min_lift,
+        )
+        return {"status": "ok", "report": report.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Reasoning analysis failed: {exc}")
+
+
+@router.post("/reasoning/recommend", tags=["reasoning"])
+def reasoning_recommend(payload: ReasoningRecommendRequest):
+    """Recommend parameter adjustments for a current design."""
+    try:
+        reasoner = _reasoner_from_outcomes(payload.outcomes, payload.success_threshold)
+        recs = reasoner.recommend(
+            payload.current_parameters,
+            bins=payload.bins,
+            min_confidence=payload.min_confidence,
+            min_lift=payload.min_lift,
+            max_recommendations=payload.max_recommendations,
+        )
+        return {"status": "ok", "recommendations": [r.to_dict() for r in recs]}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Reasoning recommendation failed: {exc}")
+
+
+@router.post("/reasoning/strategy", tags=["reasoning"])
+def reasoning_strategy(payload: ReasoningStrategyRequest):
+    """Build a knowledge-driven adaptive mutation strategy."""
+    try:
+        reasoner = _reasoner_from_outcomes(payload.outcomes, payload.success_threshold)
+        strategy = reasoner.adaptive_strategy(
+            bounds=payload.bounds or None, bins=payload.bins
+        )
+        return {"status": "ok", "strategy": strategy.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Reasoning strategy failed: {exc}")
+
+
 # Reuse the same _jobs_lock and _jobs dict from Director API
 
 def _run_experiment_job(job_id: str, req: ExperimentDefineRequest) -> None:
