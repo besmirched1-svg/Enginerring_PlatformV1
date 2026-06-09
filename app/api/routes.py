@@ -954,6 +954,206 @@ class DictJobInfo(BaseModel):
     errors: List[str] = []
 
 
+# =====================================================================
+# Factory Intelligence API — Phase 11
+# =====================================================================
+#
+# POST /api/factory/simulate     -> mass + energy balance + bottleneck
+# POST /api/factory/layout       -> auto equipment layout
+# POST /api/factory/optimize     -> multi-objective factory optimization (bg)
+# GET  /api/factory/status/{id}  -> poll factory optimization status
+# GET  /api/factory/result/{id}  -> factory optimization results
+# =====================================================================
+
+
+class FactoryConfig(BaseModel):
+    feed_rate_kg_hr: float = 1000.0
+    unit_types: Dict[str, str] = {}
+    capacities: Dict[str, float] = {}
+    efficiencies: Dict[str, float] = {}
+
+
+class FactoryOptimizeRequest(BaseModel):
+    feed_rate_kg_hr: float = 1000.0
+    population_size: int = 30
+    generations: int = 10
+    mutation_rate: float = 0.2
+    crossover_rate: float = 0.8
+    seed: Optional[int] = None
+
+
+def _build_example_factory_graph() -> Any:
+    from app.factory.models import FactoryProcessGraph, ProcessUnit, ProcessUnitType, ProcessStream, StreamType
+    g = FactoryProcessGraph(name="api_factory")
+    feed = ProcessUnit(unit_type=ProcessUnitType.RECEIVING, label="Feed", max_capacity_kg_hr=5000)
+    mill = ProcessUnit(unit_type=ProcessUnitType.MILLING, label="Mill", max_capacity_kg_hr=2000, efficiency=0.92)
+    sep = ProcessUnit(unit_type=ProcessUnitType.SEPARATION, label="Sep", max_capacity_kg_hr=1800, efficiency=0.88)
+    dry = ProcessUnit(unit_type=ProcessUnitType.DRYING, label="Dryer", max_capacity_kg_hr=1600, efficiency=0.90)
+    pkg = ProcessUnit(unit_type=ProcessUnitType.PACKAGING, label="Pkg", max_capacity_kg_hr=1500)
+    for u in [feed, mill, sep, dry, pkg]:
+        g.add_unit(u)
+    s1 = g.connect(feed.unit_id, mill.unit_id)
+    g.connect(mill.unit_id, sep.unit_id)
+    g.connect(sep.unit_id, dry.unit_id)
+    s4 = g.connect(dry.unit_id, pkg.unit_id)
+    g.feed_streams = [s1.stream_id]
+    g.product_streams = [s4.stream_id]
+    return g
+
+
+@router.post("/factory/simulate", tags=["factory"])
+def factory_simulate(payload: FactoryConfig):
+    """Run factory mass balance, energy balance, and bottleneck analysis."""
+    from app.factory.mass_balance import solve_mass_balance
+    from app.factory.energy_balance import solve_energy_balance
+    from app.factory.bottleneck import analyze_bottleneck
+
+    try:
+        g = _build_example_factory_graph()
+        mb = solve_mass_balance(g, payload.feed_rate_kg_hr)
+        eb = solve_energy_balance(g, mb.product_rate_kg_hr)
+        bn = analyze_bottleneck(g, payload.feed_rate_kg_hr)
+        return {
+            "status": "ok",
+            "mass_balance": mb.to_dict(),
+            "energy_balance": eb.to_dict(),
+            "bottleneck": bn.to_dict(),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Factory simulation failed: {exc}")
+
+
+@router.post("/factory/layout", tags=["factory"])
+def factory_layout(payload: FactoryConfig):
+    """Generate factory equipment layout."""
+    from app.factory.layout import auto_layout
+
+    try:
+        g = _build_example_factory_graph()
+        lo = auto_layout(g)
+        return {"status": "ok", "layout": lo.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Factory layout failed: {exc}")
+
+
+def _run_factory_optimization_job(job_id: str, req: FactoryOptimizeRequest) -> None:
+    def on_status(gen: int, total: int) -> None:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "stage": "optimizing",
+                    "progress": (gen + 1) / total,
+                    "message": f"Generation {gen + 1}/{total}",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    try:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id]["status"] = "running"
+                _jobs[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        from app.factory.optimization import optimize_factory
+
+        g = _build_example_factory_graph()
+        pop, history = optimize_factory(
+            g,
+            feed_rate_kg_hr=req.feed_rate_kg_hr,
+            population_size=req.population_size,
+            generations=req.generations,
+            mutation_rate=req.mutation_rate,
+            crossover_rate=req.crossover_rate,
+            seed=req.seed,
+            progress_callback=on_status,
+        )
+
+        pareto_data = []
+        for ind in pop[:10]:
+            pareto_data.append({
+                "throughput_kg_hr": round(ind.fitness.get("throughput_kg_hr", 0), 1),
+                "yield_pct": round(ind.fitness.get("yield_pct", 0), 1),
+                "energy_kwh_per_kg": round(-ind.fitness.get("energy_kwh_per_kg", 0), 3),
+                "utilization_pct": round(ind.fitness.get("utilization_pct", 0), 1),
+                "oee_score": round(ind.fitness.get("oee_score", 0), 1),
+                "layout_efficiency": round(ind.fitness.get("layout_efficiency", 0), 1),
+                "constraints_ok": ind.constraints_ok,
+            })
+
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "complete",
+                    "stage": "complete",
+                    "progress": 1.0,
+                    "message": f"Optimization complete: {len(pop)} individuals, {len(history)} generations",
+                    "result": {
+                        "population_size": len(pop),
+                        "generations": len(history),
+                        "pareto_front": pareto_data,
+                        "history": history,
+                    },
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    except Exception as exc:
+        logger.exception("Factory optimization job %s crashed", job_id)
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "failed",
+                    "stage": "crashed",
+                    "progress": 0.0,
+                    "message": str(exc),
+                    "errors": [str(exc)],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+
+@router.post("/factory/optimize", tags=["factory"])
+def start_factory_optimization(payload: FactoryOptimizeRequest, background_tasks: BackgroundTasks):
+    """Launch factory multi-objective optimization as a background job."""
+    job_id = f"fact_{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "init",
+            "progress": 0.0,
+            "message": "Factory optimization queued",
+            "errors": [],
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    background_tasks.add_task(_run_factory_optimization_job, job_id, payload)
+    logger.info("Factory optimization job %s queued", job_id)
+    return {"status": "queued", "job_id": job_id, "message": f"Factory optimization {job_id} queued"}
+
+
+@router.get("/factory/status/{job_id}", tags=["factory"])
+def get_factory_status(job_id: str):
+    """Poll factory optimization progress."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Factory job {job_id} not found")
+    return {k: v for k, v in job.items() if k != "result"}
+
+
+@router.get("/factory/result/{job_id}", tags=["factory"])
+def get_factory_result(job_id: str):
+    """Get the full factory optimization result."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Factory job {job_id} not found")
+    if job.get("status") not in ("complete", "failed"):
+        raise HTTPException(status_code=400, detail=f"Factory job {job_id} is still {job.get('status')}")
+    return job
+
+
 # Reuse the same _jobs_lock and _jobs dict from Director API
 
 def _run_experiment_job(job_id: str, req: ExperimentDefineRequest) -> None:

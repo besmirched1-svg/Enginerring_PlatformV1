@@ -720,6 +720,125 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# CLI: factory commands
+# ---------------------------------------------------------------------------
+
+def _make_example_factory_graph() -> Any:
+    from app.factory.models import FactoryProcessGraph, ProcessUnit, ProcessUnitType, ProcessStream, StreamType
+    g = FactoryProcessGraph(name="example_factory")
+    feed = ProcessUnit(unit_type=ProcessUnitType.RECEIVING, label="Feed", max_capacity_kg_hr=5000)
+    mill = ProcessUnit(unit_type=ProcessUnitType.MILLING, label="Mill", max_capacity_kg_hr=2000, efficiency=0.92)
+    sep = ProcessUnit(unit_type=ProcessUnitType.SEPARATION, label="Sep", max_capacity_kg_hr=1800, efficiency=0.88)
+    dry = ProcessUnit(unit_type=ProcessUnitType.DRYING, label="Dryer", max_capacity_kg_hr=1600, efficiency=0.90)
+    pkg = ProcessUnit(unit_type=ProcessUnitType.PACKAGING, label="Pkg", max_capacity_kg_hr=1500)
+    for u in [feed, mill, sep, dry, pkg]:
+        g.add_unit(u)
+    s1 = g.connect(feed.unit_id, mill.unit_id)
+    g.connect(mill.unit_id, sep.unit_id)
+    g.connect(sep.unit_id, dry.unit_id)
+    s4 = g.connect(dry.unit_id, pkg.unit_id)
+    g.feed_streams = [s1.stream_id]
+    g.product_streams = [s4.stream_id]
+    return g
+
+
+def cmd_factory_simulate(args: argparse.Namespace) -> int:
+    from app.factory.mass_balance import solve_mass_balance
+    from app.factory.energy_balance import solve_energy_balance
+    from app.factory.bottleneck import analyze_bottleneck
+
+    g = _make_example_factory_graph()
+    feed_rate = args.feed_rate
+
+    mb = solve_mass_balance(g, feed_rate)
+    eb = solve_energy_balance(g, mb.product_rate_kg_hr)
+    bn = analyze_bottleneck(g, feed_rate)
+
+    print()
+    print("  Factory Simulation Results")
+    print("  " + "=" * 50)
+    print(f"  Feed:           {mb.feed_rate_kg_hr:.0f} kg/hr")
+    print(f"  Product:        {mb.product_rate_kg_hr:.0f} kg/hr")
+    print(f"  Waste:          {mb.waste_rate_kg_hr:.0f} kg/hr")
+    print(f"  Yield:          {mb.system_yield*100:.1f}%")
+    print(f"  Power:          {eb.total_power_kw:.1f} kW")
+    print(f"  Energy:         {eb.specific_energy_kwh_kg:.3f} kWh/kg")
+    print(f"  Bottleneck:     {bn.bottleneck_step or 'none'}")
+    print(f"  Max capacity:   {bn.theoretical_max_kg_hr:.0f} kg/hr")
+    print(f"  OEE:            {bn.overall_equipment_effectiveness*100:.1f}%")
+    print(f"  Converged:      {mb.converged}")
+    if mb.warnings:
+        for w in mb.warnings:
+            print(f"  Warning: {w}")
+    print()
+    return 0
+
+
+def cmd_factory_layout(args: argparse.Namespace) -> int:
+    from app.factory.layout import auto_layout
+
+    g = _make_example_factory_graph()
+    lo = auto_layout(g)
+
+    print()
+    print("  Factory Layout")
+    print("  " + "=" * 50)
+    print(f"  Total area:         {lo.total_area_m2:.1f} m2")
+    print(f"  Handling distance:  {lo.material_handling_distance_m:.1f} m")
+    print(f"  Bounding box:       x=[{lo.bounding_box[0]:.0f}, {lo.bounding_box[2]:.0f}] "
+          f"y=[{lo.bounding_box[1]:.0f}, {lo.bounding_box[3]:.0f}]")
+    print(f"  Placement eff:      {lo.placement_efficiency:.1%}")
+    print(f"  Overlaps:           {lo.overlap_count}")
+    print()
+    print("  Equipment positions:")
+    for uid, pos in lo.positions.items():
+        print(f"    {pos.label:12s}  ({pos.x:.1f}, {pos.y:.1f})  {pos.width_m:.1f}x{pos.depth_m:.1f}m")
+    print()
+    return 0
+
+
+def cmd_factory_optimize(args: argparse.Namespace) -> int:
+    from app.factory.optimization import optimize_factory
+
+    g = _make_example_factory_graph()
+    pop, history = optimize_factory(
+        g,
+        feed_rate_kg_hr=args.feed_rate,
+        population_size=args.population,
+        generations=args.generations,
+        mutation_rate=args.mutation,
+        crossover_rate=args.crossover,
+        seed=args.seed,
+    )
+
+    best = pop[0]
+    print()
+    print("  Factory Optimization Results")
+    print("  " + "=" * 50)
+    print(f"  Generations: {len(history)}")
+    print(f"  Population:  {len(pop)}")
+    print()
+    print("  Best Individual:")
+    print(f"    Throughput:        {best.fitness.get('throughput_kg_hr', 0):.0f} kg/hr")
+    print(f"    Yield:             {best.fitness.get('yield_pct', 0):.1f}%")
+    print(f"    Energy:            {-best.fitness.get('energy_kwh_per_kg', 0):.3f} kWh/kg")
+    print(f"    Utilization:       {best.fitness.get('utilization_pct', 0):.1f}%")
+    print(f"    OEE:               {best.fitness.get('oee_score', 0):.1f}%")
+    print(f"    Layout Efficiency: {best.fitness.get('layout_efficiency', 0):.1f}%")
+    print(f"    Constraints ok:    {best.constraints_ok}")
+    if best.constraint_violations:
+        for v in best.constraint_violations:
+            print(f"    Violation: {v}")
+    print()
+    print("  Evolution History (every 5th gen):")
+    for h in history[::max(1, len(history)//5)]:
+        print(f"    Gen {h['generation']:3d}: throughput={h['best_throughput']:.0f}  yield={h['best_yield']:.1f}%  "
+              f"energy={h['best_energy']:.3f}  pareto={h['pareto_front_size']}")
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -799,6 +918,20 @@ def main() -> int:
     verify_p.add_argument("--data", "-d", default="", help="Data string to verify")
     verify_p.add_argument("signature", help="Expected signature")
 
+    # factory
+    factory_p = subparsers.add_parser("factory", help="Factory intelligence commands")
+    factory_sub = factory_p.add_subparsers(dest="factory_cmd")
+    sim_p = factory_sub.add_parser("simulate", help="Run factory mass/energy balance")
+    sim_p.add_argument("--feed-rate", type=float, default=1000.0, help="Feed rate kg/hr")
+    lay_p = factory_sub.add_parser("layout", help="Generate factory layout")
+    opt_p = factory_sub.add_parser("optimize", help="Run factory Pareto optimization")
+    opt_p.add_argument("--feed-rate", type=float, default=1000.0, help="Feed rate kg/hr")
+    opt_p.add_argument("--population", type=int, default=20, help="Population size")
+    opt_p.add_argument("--generations", type=int, default=5, help="Number of generations")
+    opt_p.add_argument("--mutation", type=float, default=0.2, help="Mutation rate")
+    opt_p.add_argument("--crossover", type=float, default=0.8, help="Crossover rate")
+    opt_p.add_argument("--seed", type=int, default=None, help="Random seed")
+
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging")
 
@@ -849,6 +982,13 @@ def main() -> int:
             "list": cmd_compute_list,
         }
         return compute_map.get(args.compute_cmd, lambda a: print("Unknown compute command"))(args)
+    elif args.command == "factory":
+        factory_map = {
+            "simulate": cmd_factory_simulate,
+            "layout": cmd_factory_layout,
+            "optimize": cmd_factory_optimize,
+        }
+        return factory_map.get(args.factory_cmd, lambda a: print("Unknown factory command"))(args)
     elif args.command == "data-dir":
         return cmd_data_dir(args)
     elif args.command == "dashboard":

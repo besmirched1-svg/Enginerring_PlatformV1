@@ -125,6 +125,12 @@ class FactoryProcessGraph:
 
     def add_stream(self, stream: ProcessStream) -> ProcessStream:
         self.streams[stream.stream_id] = stream
+        src = self.units.get(stream.source)
+        tgt = self.units.get(stream.target)
+        if src and stream.stream_id not in src.output_streams:
+            src.output_streams.append(stream.stream_id)
+        if tgt and stream.stream_id not in tgt.input_streams:
+            tgt.input_streams.append(stream.stream_id)
         return stream
 
     def connect(self, source_id: str, target_id: str, stream: Optional[ProcessStream] = None) -> ProcessStream:

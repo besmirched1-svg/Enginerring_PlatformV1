@@ -137,9 +137,10 @@ def auto_layout(
             dist = math.sqrt((tx - sx) ** 2 + (ty - sy) ** 2)
             total_distance += dist
 
+    # Positions are top-left corners; use axis-aligned bounding-box overlap.
     for (a_id, a_pos), (b_id, b_pos) in itertools.combinations(positions.items(), 2):
-        overlap_x = max(0, a_pos.width_m + b_pos.width_m - abs(a_pos.x - b_pos.x))
-        overlap_y = max(0, a_pos.depth_m + b_pos.depth_m - abs(a_pos.y - b_pos.y))
+        overlap_x = min(a_pos.x + a_pos.width_m, b_pos.x + b_pos.width_m) - max(a_pos.x, b_pos.x)
+        overlap_y = min(a_pos.y + a_pos.depth_m, b_pos.y + b_pos.depth_m) - max(a_pos.y, b_pos.y)
         if overlap_x > 0 and overlap_y > 0:
             overlap_count += 1
 

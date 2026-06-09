@@ -122,15 +122,15 @@ def solve_mass_balance(
             else:
                 eff = unit.efficiency if unit.efficiency < 1.0 else _default_efficiency(unit.unit_type)
                 cap = unit.max_capacity_kg_hr
+                unit_bal_status = "ok"
                 if input_mass > cap:
                     eff_adj = cap / input_mass
                     eff = min(eff, eff_adj)
                     unit_bal_status = "capacity_limited"
-                else:
-                    unit_bal_status = "ok"
                 output_mass = input_mass * eff
-                for sid in unit.output_streams:
-                    stream_flows_iter[sid] = output_mass / max(len(unit.output_streams), 1)
+                non_feed_outputs = [sid for sid in unit.output_streams if sid not in graph.feed_streams]
+                for sid in non_feed_outputs:
+                    stream_flows_iter[sid] = output_mass / max(len(non_feed_outputs), 1)
 
             if unit.unit_type not in (ProcessUnitType.SPLITTER, ProcessUnitType.MERGER):
                 ub = UnitMassBalance(
