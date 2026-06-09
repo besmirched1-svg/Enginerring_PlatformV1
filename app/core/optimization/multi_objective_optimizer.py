@@ -847,27 +847,23 @@ if __name__ == "__main__":
     # Example usage and testing
     logging.basicConfig(level=logging.INFO)
     
-    print("Creating hemp decorticator multi-objective optimizer...")
+    logger.info("Creating hemp decorticator multi-objective optimizer...")
     optimizer = create_hemp_decotitator_optimizer(population_size=50)
     
-    print(f"Optimizer configured with {len(optimizer.objectives)} objectives:")
-    for i, obj in enumerate(optimizer.objectives):
-        print(f"  {i+1}. {obj.name} ({'minimize' if obj.minimize else 'maximize'})")
+    logger.info(f"Optimizer configured with {len(optimizer.objectives)} objectives: {[obj.name for obj in optimizer.objectives]}")
     
-    print("\nRunning optimization (50 generations for demo)...")
+    logger.info("Running optimization (50 generations for demo)...")
     result = optimizer.optimize(max_generations=50)
     
-    print(f"\nOptimization complete!")
-    print(f"Pareto front size: {len(result.pareto_front)}")
+    logger.info(f"Optimization complete — Pareto front size: {len(result.pareto_front)}")
     
     if result.pareto_front:
-        print("\nTop 5 Pareto solutions:")
+        logger.info("Top 5 Pareto solutions:")
         for i, ind in enumerate(result.pareto_front[:5]):
-            print(f"  Solution {i+1}:")
+            logger.info(f"  Solution {i+1}:")
             for j, (name, value) in enumerate(zip(ind.objective_names, ind.objectives)):
-                # Show original values for maximization objectives
-                display_value = -value if j < 2 else value  # First two are negated
-                print(f"    {name}: {display_value:.4f}")
-            print(f"    Parameters: {list(ind.parameters.keys())[:3]}...")  # Show first 3 param names
+                display_value = -value if j < 2 else value
+                logger.info(f"    {name}: {display_value:.4f}")
+            logger.info(f"    Parameters: {list(ind.parameters.keys())[:3]}...")
     
-    print("\nMulti-objective optimizer ready for use!")
+    logger.info("Multi-objective optimizer ready for use!")

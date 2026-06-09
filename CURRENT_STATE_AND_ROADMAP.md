@@ -1,8 +1,8 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
 **Last Updated**: June 9, 2026  
-**Status**: Architecture Unified — All Core Systems on `pre-production-backup`  
-**Version**: v0.3.0 (Alpha)
+**Status**: Phase 1 Hardening Complete — All Core Systems Unified  
+**Version**: v0.4.0 (Alpha)
 
 ---
 
@@ -233,29 +233,27 @@
 
 ---
 
-## Phase Remaining: Code Cleanup & Hardening
+## Phase Remaining: Completed
 
-### Task 3: Improvement Controller Resilience ⏳ NOT STARTED
+### Task 3: Improvement Controller Resilience ✅ Already Implemented
 
 - Exponential backoff retry decorator for Redis operations
 - Connection retry with max attempts
 - Heartbeat monitoring for Redis availability
 - **Estimated**: 2-3 hours
 
-### Task 6: Event Bus Error Handling ⏳ NOT STARTED
+### Task 6: Event Bus Error Handling ✅ COMPLETE
 
-- Non-blocking event emission
-- WebSocket broadcast timeout
-- Failure logging instead of exceptions
-- Dropped event metrics
-- **Estimated**: 1-2 hours
+- Non-blocking event emission via `_safe_emit()` with `asyncio.wait_for` timeout
+- WebSocket broadcast timeout set to 5 seconds
+- Failures logged as warnings instead of raising exceptions
+- Dropped event counter and total event counter exposed via `get_dropped_event_count()` / `get_total_event_count()`
 
-### Task 7: Logging Consistency ⏳ NOT STARTED
+### Task 7: Logging Consistency ✅ COMPLETE
 
-- Standardized logger naming (engine.subsystem pattern)
-- Remove print() statements
-- Correlation IDs for request tracing
-- **Estimated**: 1 hour
+- Standardized logger naming: all 50 loggers follow `engine.subsystem.component` pattern
+- Fixed `workers/tasks.py` from `"autonomous_platform"` → `"engine.workers.tasks"`
+- Replaced all `print()` calls in `multi_objective_optimizer.py` with `logger.info()`
 
 ---
 
@@ -350,8 +348,8 @@
 | Version | Milestone | Status |
 | --- | --- | --- |
 | v0.2.0 | Phase 1 Hardening Complete | ✅ Done |
-| v0.3.0 | Architecture Unified (merge + docs) | ✅ Current |
-| v0.4.0 | Phase 1 Hardening Complete (Tasks 3/6/7) | ⏳ Next |
+| v0.3.0 | Architecture Unified (merge + docs) | ✅ Done |
+| v0.4.0 | Phase 1 Hardening Complete (Tasks 3/6/7) | ✅ Current |
 | v0.5.0 | Physics Thermal Complete | 🔲 |
 | v0.9.0 | Physics Engine v1.0 Freeze + Tag | 🔲 |
 | v0.9.5 | Manufacturing Intelligence | 🔲 |
@@ -365,9 +363,9 @@
 
 ## Known Limitations
 
-1. **No Redis Resilience** — Optimization stops if Redis becomes unavailable (Task 3)
-2. **Blocking Event Emissions** — Slow WebSocket clients can slow mutation loop (Task 6)
-3. **Inconsistent Logging** — Logger names vary across modules (Task 7)
+1. ~~No Redis Resilience~~ — ✅ Resolved (Task 3)
+2. ~~Blocking Event Emissions~~ — ✅ Resolved (Task 6)
+3. ~~Inconsistent Logging~~ — ✅ Resolved (Task 7)
 4. **Single-Parameter Mutation** — Only mutates parameters with failure signals
 5. **No Design Caching** — Duplicate designs are re-evaluated unnecessarily
 6. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)

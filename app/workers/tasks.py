@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 from app.core.swarm import MultiAgentSwarm
 
-logger = logging.getLogger("autonomous_platform")
+logger = logging.getLogger("engine.workers.tasks")
 
 
 def run_optimization_loop(prompt: str, session_id: str) -> Dict[str, Any]:
