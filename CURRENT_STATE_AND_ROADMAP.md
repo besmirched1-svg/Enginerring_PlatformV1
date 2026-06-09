@@ -1,8 +1,8 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
 **Last Updated**: June 9, 2026  
-**Status**: Phase 5 Multi-Objective Optimization Complete — Pareto front integrated into Director  
-**Version**: v1.1.0 (Alpha)
+**Status**: Phase 6 Specialized Agent Ecosystem Complete — 9 scoring agents integrated into Director  
+**Version**: v1.2.0 (Alpha)
 
 ---
 
@@ -409,14 +409,28 @@
 
 ---
 
-## Phase 6: Specialized Agent Ecosystem
+## Phase 6: Specialized Agent Ecosystem ✅ COMPLETE
 
 **Goal**: Domain-specialized scoring agents
 
-### Agents
+### Agents created (app/agents/)
 
-- Designer, Validator, Physics, Digital Twin
-- Manufacturing, Cost, Reliability, Compliance, Promotion
+- DesignerAgent — Design quality, proportions, standard sizes ✅
+- ValidatorAgent — Constraint and bounds validation ✅
+- PhysicsAgent — Safety factors, bearing life, fatigue scoring ✅
+- DigitalTwinAgent — Wear, fatigue life, MTBF scoring ✅
+- ManufacturingAgent — Material utilisation, hours, complexity ✅
+- CostAgent — Cost efficiency, cost per kg, budget compliance ✅
+- ComplianceAgent — ISO, AS/NZS, CE, safety guarding checks ✅
+- ReliabilityAgent — MTBF, failure rate, maintenance scoring ✅
+- PromotionAgent — Pareto-dominance-based promotion decisions ✅
+
+### Architecture
+
+- BaseAgent ABC with AgentScore/AgentInput dataclasses
+- AgentOrchestrator runs all agents, aggregates into objective vector
+- Objective vector feeds into Pareto analysis in Director
+- 32 tests covering all agents, orchestration, error handling
 
 ---
 
@@ -448,7 +462,8 @@
 | v1.0.0 | Autonomous Engineering Director | ✅ Done |
 | v1.1.0 | Multi-Objective Optimization (NSGA-II) | ✅ Done |
 | v1.1.0 | Multi-Objective Optimization | ✅ Done |
-| v1.2.0 | Specialized Agent Ecosystem | 🔲 Current |
+| v1.2.0 | Specialized Agent Ecosystem | ✅ Done |
+| v1.3.0 | Hardware Feedback Foundation | 🔲 Current |
 | v1.3.0 | Hardware Feedback Foundation | 🔲 |
 | v2.0.0 | Autonomous Engineering Intelligence Platform | 🔲 |
 
@@ -465,6 +480,7 @@
 7. ~~**No Manufacturing Intelligence**~~ — ✅ Resolved (Phase 3 complete — 7 modules, 23 tests)
 8. ~~**No Engineering Director**~~ — ✅ Resolved (Phase 4 — 4 modules, 17 tests)
 9. **Director Uses Mock Physics/CAD** — Actual modules not yet wired into pipeline
+10. **Agents use config-based scoring** — Only Designer/Validator directly inspect config; others require physics/manufacturing results in config dict
 
 ---
 
@@ -472,8 +488,8 @@
 
 | Metric | Previous | Current | Target |
 | --- | --- | --- | --- |
-| Test Count | 229 | 267 | 350 |
-| Test Coverage | ~80% | ~82% | 85% |
+| Test Count | 267 | 299 | 400 |
+| Test Coverage | ~82% | ~84% | 85% |
 | Edge Cases | 16 | 16 | 25 |
 | Bounds Validation Layers | 3 | 3 | 3 |
 | Documentation | 95% | 95% | 100% |

@@ -7,6 +7,19 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from app.agents import (
+    AgentInput,
+    AgentOrchestrator,
+    ComplianceAgent,
+    CostAgent,
+    DesignerAgent,
+    DigitalTwinAgent,
+    ManufacturingAgent,
+    PhysicsAgent,
+    PromotionAgent,
+    ReliabilityAgent,
+    ValidatorAgent,
+)
 from app.core.events import (
     DIRECTOR_COMPLETE,
     DIRECTOR_FAILED,
@@ -55,6 +68,22 @@ class EngineerDirector:
         self.planner = EngineeringPlanner()
         self.packer = EngineeringPackAssembler()
         self.stage_log: List[Dict[str, Any]] = []
+        self._agents = self._create_agent_orchestrator()
+
+    def _create_agent_orchestrator(self) -> AgentOrchestrator:
+        orch = AgentOrchestrator()
+        orch.register_all([
+            DesignerAgent(),
+            ValidatorAgent(),
+            PhysicsAgent(),
+            DigitalTwinAgent(),
+            ManufacturingAgent(),
+            CostAgent(),
+            ComplianceAgent(),
+            ReliabilityAgent(),
+            PromotionAgent(),
+        ])
+        return orch
 
     # ------------------------------------------------------------------
     # Event helpers
@@ -246,66 +275,6 @@ class EngineerDirector:
             })
             return None
 
-    # ------------------------------------------------------------------
-    # Pareto-aware objectives
-    # ------------------------------------------------------------------
-
-    def _compute_objective_vector(
-        self,
-        physics: PhysicsResult,
-        manufacturing: ManufacturingResult,
-    ) -> tuple[List[float], List[str]]:
-        """Build an objective vector from physics + manufacturing results.
-
-        Each objective is a float where higher = better after transformation.
-        Names are returned for display / Pareto analysis.
-        """
-        names = [
-            "shaft_safety",
-            "frame_safety",
-            "rotor_safety",
-            "bearing_life",
-            "fatigue_safety",
-            "cost_efficiency",
-            "serviceability",
-            "material_utilisation",
-        ]
-        bearing = min(1.0, physics.bearing_life_hours / 50000.0)
-        cost_eff = 1.0 - min(1.0, manufacturing.total_build_cost_aud / 100000.0)
-        values = [
-            min(1.0, physics.shaft_safety_factor / 3.0),
-            min(1.0, physics.frame_safety_factor / 3.0),
-            min(1.0, physics.rotor_safety_factor / 3.0),
-            bearing,
-            min(1.0, physics.fatigue_safety_factor / 3.0),
-            max(0.0, cost_eff),
-            min(1.0, manufacturing.serviceability_index / 100.0),
-            min(1.0, manufacturing.material_utilisation / 100.0),
-        ]
-        return values, names
-
-    def _pareto_score(
-        self,
-        objectives: List[float],
-        ideal: List[float],
-        nadir: List[float],
-    ) -> float:
-        """Score an individual by its normalised distance to the ideal point.
-
-        Uses Euclidean distance in normalised objective space.
-        Returns 0.0-1.0 where 1.0 = at the ideal point.
-        """
-        if not objectives or not ideal or not nadir:
-            return 0.0
-        eps = 1e-12
-        dist_sum = 0.0
-        for o, i, n in zip(objectives, ideal, nadir):
-            rng = n - i
-            norm = (o - i) / (rng if abs(rng) > eps else 1.0)
-            dist_sum += max(0.0, min(1.0, norm)) ** 2
-        # Normalise so max possible distance = 1.0 per objective
-        return 1.0 - (dist_sum / len(objectives)) ** 0.5
-
     def _run_physics(self, goal: EngineeringGoal) -> PhysicsResult:
         logger.info("Running physics analysis suite...")
 
@@ -381,30 +350,54 @@ class EngineerDirector:
         manufacturing: ManufacturingResult,
         goal: EngineeringGoal,
     ) -> tuple[float, List[float], List[str]]:
-        """Evaluate design using Pareto-aware multi-objective scoring.
+        """Evaluate design using the specialised scoring agents.
 
+        Each agent produces a domain-specific score; the orchestrator
+        aggregates them into an objective vector and composite score.
         Returns (composite_score, objective_vector, objective_names).
-        The composite score is a distance-to-ideal metric in normalised
-        objective space, replacing the old weighted sum heuristic.
         """
-        values, names = self._compute_objective_vector(physics, manufacturing)
+        # Build physics + manufacturing values into config for agents
+        agent_config: Dict[str, Any] = goal.constraints.copy()
+        agent_config["type"] = goal.machine_type
+        agent_config["temperature_c"] = goal.temperature_c
+        agent_config["target_mass_kg"] = goal.target_mass_kg
+        agent_config["target_cost_aud"] = goal.target_cost_aud
 
-        # Ideal = all 1.0 (best possible for each objective)
-        # Nadir = all 0.0 (worst)
-        ideal = [1.0] * len(values)
-        nadir = [0.0] * len(values)
+        # Inject physics results for agents that read from config
+        agent_config["shaft_safety_factor"] = physics.shaft_safety_factor
+        agent_config["frame_safety_factor"] = physics.frame_safety_factor
+        agent_config["rotor_safety_factor"] = physics.rotor_safety_factor
+        agent_config["bearing_life_hours"] = physics.bearing_life_hours
+        agent_config["fatigue_safety_factor"] = physics.fatigue_safety_factor
+        agent_config["natural_frequency_hz"] = physics.natural_frequency_hz
 
-        score = self._pareto_score(values, ideal, nadir)
+        # Inject manufacturing results
+        agent_config["sheets_required"] = manufacturing.sheets_required
+        agent_config["material_utilisation"] = manufacturing.material_utilisation
+        agent_config["total_weld_length_m"] = manufacturing.total_weld_length_m
+        agent_config["fabrication_hours"] = manufacturing.fabrication_hours
+        agent_config["machining_hours"] = manufacturing.machining_hours
+        agent_config["assembly_hours"] = manufacturing.assembly_hours
+        agent_config["serviceability_index"] = manufacturing.serviceability_index
+        agent_config["total_build_cost_aud"] = manufacturing.total_build_cost_aud
+        agent_config["cost_per_kg_aud"] = manufacturing.cost_per_kg_aud
 
-        # Blend in constraint pass/fail as a penalty (keeps safety gate)
-        all_passed = physics.passed and manufacturing.passed
-        if not all_passed:
-            score *= 0.5
+        inp = AgentInput(
+            config=agent_config,
+            prompt=goal.prompt,
+            machine_type=goal.machine_type,
+            temperature_c=goal.temperature_c,
+            target_mass_kg=goal.target_mass_kg,
+            target_cost_aud=goal.target_cost_aud,
+        )
+        result = self._agents.evaluate(inp)
 
-        score = min(1.0, max(0.0, score))
+        logger.info(
+            "Agent evaluation: composite=%.3f passed=%s agents=%d",
+            result.composite, result.passed, len(result.scores),
+        )
 
-        logger.info("Pareto-aware score: %.3f (vector length=%d)", score, len(values))
-        return score, values, names
+        return result.composite, result.objective_vector, result.objective_names
 
     def _finalize(
         self,
