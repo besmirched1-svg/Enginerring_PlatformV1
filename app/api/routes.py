@@ -811,6 +811,14 @@ class ExperimentJobInfo(BaseModel):
     errors: List[str] = []
 
 
+class DictJobInfo(BaseModel):
+    job_id: str
+    status: str = "queued"
+    progress: float = 0.0
+    message: str = ""
+    errors: List[str] = []
+
+
 # Reuse the same _jobs_lock and _jobs dict from Director API
 
 def _run_experiment_job(job_id: str, req: ExperimentDefineRequest) -> None:
@@ -961,3 +969,149 @@ def get_experiment_result(job_id: str):
     if job.get("status") not in ("complete", "failed"):
         raise HTTPException(status_code=400, detail=f"Experiment {job_id} is still {job.get('status')}")
     return job
+
+
+# =====================================================================
+# Evolution API — NSGA-II multi-objective optimization (Phase 9)
+# =====================================================================
+#
+# POST /api/evolution/run   -> run NSGA-II on default 10 objectives
+# GET  /api/evolution/status/{job_id} -> poll evolution status
+# GET  /api/evolution/result/{job_id} -> Pareto front + knee data
+# =====================================================================
+
+
+class EvolutionRunRequest(BaseModel):
+    population_size: int = 50
+    generations: int = 20
+    seed: Optional[int] = None
+
+
+def _run_evolution_job(job_id: str, req: EvolutionRunRequest) -> None:
+    """Background worker: runs NSGA-II evolution."""
+    def on_status(stage: str, progress: float, message: str) -> None:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "stage": stage,
+                    "progress": progress,
+                    "message": message,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    try:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id]["status"] = "running"
+                _jobs[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        from app.evolution.nsga2 import (
+            EvoParams,
+            PARAM_BOUNDS,
+            OBJECTIVE_NAMES_10,
+            MINIMIZE_FLAGS_10,
+            evaluate_10_objectives,
+            run_nsga2,
+            pareto_front_data,
+        )
+
+        params = EvoParams(
+            population_size=req.population_size,
+            generations=req.generations,
+        )
+
+        pareto_front, all_generations = run_nsga2(
+            evaluate_func=evaluate_10_objectives,
+            objective_names=OBJECTIVE_NAMES_10,
+            minimize_flags=MINIMIZE_FLAGS_10,
+            bounds=PARAM_BOUNDS,
+            params=params,
+            seed=req.seed,
+            callback=lambda gen, pop: on_status("evolving", (gen + 1) / req.generations, f"Generation {gen + 1}/{req.generations}"),
+        )
+
+        front_data = pareto_front_data(pareto_front, OBJECTIVE_NAMES_10, MINIMIZE_FLAGS_10)
+
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "complete",
+                    "stage": "complete",
+                    "progress": 1.0,
+                    "message": f"Evolution complete: {len(pareto_front)} solutions on Pareto front",
+                    "result": front_data,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    except Exception as exc:
+        logger.exception("Evolution job %s crashed", job_id)
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "failed",
+                    "stage": "crashed",
+                    "progress": 0.0,
+                    "message": str(exc),
+                    "errors": [str(exc)],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+
+@router.post("/evolution/run", tags=["evolution"])
+def start_evolution(payload: EvolutionRunRequest, background_tasks: BackgroundTasks):
+    """Launch NSGA-II multi-objective evolution as a background job."""
+    job_id = f"evo_{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "init",
+            "progress": 0.0,
+            "message": "Evolution queued",
+            "errors": [],
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    background_tasks.add_task(_run_evolution_job, job_id, payload)
+    logger.info(
+        "Evolution job %s queued: pop=%d gen=%d",
+        job_id, payload.population_size, payload.generations,
+    )
+    return {"status": "queued", "job_id": job_id}
+
+
+@router.get("/evolution/status/{job_id}", tags=["evolution"])
+def get_evolution_status(job_id: str):
+    """Poll evolution progress."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Evolution job {job_id} not found")
+    return DictJobInfo(**{k: v for k, v in job.items() if k in DictJobInfo.model_fields})
+
+
+@router.get("/evolution/result/{job_id}", tags=["evolution"])
+def get_evolution_result(job_id: str):
+    """Get Pareto front and knee analysis results."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Evolution job {job_id} not found")
+    if job.get("status") not in ("complete", "failed"):
+        raise HTTPException(status_code=400, detail=f"Evolution {job_id} is still {job.get('status')}")
+    result = job.get("result")
+    if not result:
+        return {"status": job.get("status"), "message": job.get("message", "")}
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "front_size": result.get("front_size", 0),
+        "objective_names": result.get("objective_names", []),
+        "ideal_point": result.get("ideal_point", []),
+        "nadir_point": result.get("nadir_point", []),
+        "knee": result.get("knee"),
+        "solutions": result.get("solutions", []),
+    }

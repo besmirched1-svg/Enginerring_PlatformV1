@@ -1,116 +1,209 @@
-# Engineering Platform Roadmap V2 — Second Generation
+# ROADMAP_V2
 
-**Starting point**: v1.4.0 — Original roadmap complete, closed-loop autonomous engineering achieved.
+## AUTONOMOUS ENGINEERING INTELLIGENCE ECOSYSTEM
 
-**Version scheme**: v1.5.x+ for second-generation phases, v2.0.0 for production platform.
+Starting Point:
+
+v1.4.0
+
+Original roadmap complete.
+
+Closed-loop autonomous engineering achieved.
+
+---
+
+# v1.5.x
+
+## Phase 8 — Engineering Experiment Laboratory
+
+Goal:
+
+Turn the platform into a virtual engineering research laboratory.
+
+Deliverables:
+
+* Design of Experiments
+* Parameter sweeps
+* Massive variant generation
+* Pareto front construction
+* Automated engineering reports
+* REST API
+* Background execution
 
 ---
 
-## Phase 8 — Engineering Experiment Laboratory (Current — v1.5.0)
-
-**Goal**: Automatically explore thousands of design permutations and generate engineering research reports.
-
-**Why**: All the physics, manufacturing, and digital twin modules exist. Phase 8 makes them work together to answer "what if?" questions at scale.
-
-- [x] ExperimentDefinition model (parameter ranges, constraints, objectives)
-- [x] Design generator (Latin Hypercube / Sobol / Grid / Random sampling)
-- [x] Flat-to-nested config mapping (bridges optimizer params to Director pipeline)
-- [x] ExperimentRunner: generate N variants → evaluate all objectives → Pareto rank
-- [x] Pareto front builder (dominance-based ranking)
-- [x] Research report generator (HTML + text summary, champion, statistics)
-- [x] REST API: POST define, POST run, GET status, GET result
-- [x] Background job execution with status polling
-- [x] 14 integration tests
-
----
+# v1.6.x
 
 ## Phase 9 — Multi-Objective Evolution
 
-**Goal**: Replace single-score optimization with simultaneous Pareto optimization across fibre recovery, quality, power, cost, weight, maintenance, and reliability.
+Goal:
 
-**Why**: Trading off recovery vs. cost vs. reliability is the real engineering decision.
+Replace single-score optimisation.
 
-- [ ] Wire NSGA-II optimizer as primary improvement controller (replaces single-score mutation)
-- [ ] EngineerDirector supports multi-objective goals
-- [ ] Champion selection uses Pareto rank + knee analysis, not composite score alone
-- [ ] Interactive trade-off visualization data
+Objectives:
+
+* Fibre recovery
+* Fibre quality
+* Throughput
+* Power
+* Weight
+* Capital cost
+* Operating cost
+* Maintenance
+* Reliability
+* MTBF
+
+Deliverables:
+
+* NSGA-II
+* Pareto ranking
+* Knee analysis
+* Trade-off visualisation
 
 ---
+
+# v1.7.x
 
 ## Phase 10 — Autonomous Engineering Department
 
-**Goal**: Multiple specialized agents negotiate design decisions as an engineering committee.
+Goal:
 
-**Why**: Real engineering involves trade-offs between disciplines — the system should deliberate, not just optimize.
+Create a virtual engineering committee.
 
-- [ ] Agent negotiation protocol (Designer proposes, Physics/Manufacturing/Cost vote)
-- [ ] Mediation strategies: majority, weighted, veto-based
-- [ ] Design iteration with agent feedback loop
-- [ ] Archived negotiation transcripts for audit
+Deliverables:
+
+* Agent negotiation
+* Weighted voting
+* Veto systems
+* Mediation
+* Deliberative design loops
+* Decision archives
 
 ---
+
+# v1.8.x
 
 ## Phase 11 — Factory Intelligence
 
-**Goal**: Optimize complete processing facilities, not just individual machines.
+Goal:
 
-**Why**: A decorticator that works in isolation may bottleneck the plant.
+Optimise complete processing plants.
 
-- [ ] Multi-machine process graph (receiving → decorticator → cleaner → dryer → baler → storage)
-- [ ] Factory-level mass/energy balance
-- [ ] Bottleneck detection and mitigation
-- [ ] Factory-wide Pareto optimization
-- [ ] Factory layout and material flow analysis
+Deliverables:
+
+* Factory process graphs
+* Mass balance
+* Energy balance
+* Bottleneck analysis
+* Layout optimisation
+* Factory Pareto optimisation
 
 ---
+
+# v1.9.x
 
 ## Phase 12 — Economic Engineering
 
-**Goal**: Every design outputs capital cost, operating cost, maintenance cost, energy cost, 10-year ownership cost, and cost per kg of output.
+Goal:
 
-**Why**: Engineering decisions are ultimately economic decisions.
+Treat economics as a first-class engineering objective.
 
-- [ ] Capital cost model (materials, fabrication, assembly, transport, installation)
-- [ ] Operating cost model (labour, energy, consumables)
-- [ ] Maintenance cost model (wear parts, scheduled service, downtime)
-- [ ] Life-cycle cost aggregation
-- [ ] Cost per kg / cost per hour output metrics
+Deliverables:
+
+* Capital cost
+* Operating cost
+* Maintenance cost
+* Life-cycle cost
+* Cost per kilogram
+* Ownership modelling
 
 ---
+
+# v2.0.x
 
 ## Phase 13 — Knowledge Reasoning
 
-**Goal**: Move from knowledge storage to knowledge-based design decisions.
+Goal:
 
-**Why**: The KnowledgeStore has historical design data — the system should learn from it.
+Transform historical data into engineering wisdom.
 
-- [ ] Historical pattern mining (which parameter changes improved which objectives)
-- [ ] Rule extraction from champion lineage
-- [ ] Design recommendation engine ("this geometry tends to improve recovery by 8%")
-- [ ] Confidence-scored suggestions
+Deliverables:
+
+* Pattern mining
+* Rule extraction
+* Recommendation engine
+* Confidence scoring
+* Adaptive mutation strategies
 
 ---
+
+# v2.1.x
 
 ## Phase 14 — Autonomous Research Agent
 
-**Goal**: Ingest patents, engineering papers, technical manuals, and historical drawings into the knowledge graph.
+Goal:
 
-**Why**: External engineering knowledge is the largest untapped resource.
+Learn from external engineering knowledge.
 
-- [ ] Document ingestion pipeline (PDF, patent XML, plaintext)
-- [ ] Engineering entity extraction (parameters, materials, geometries, methods)
-- [ ] Knowledge graph integration
-- [ ] Cross-reference with experimental results
+Deliverables:
+
+* Patent ingestion
+* Engineering paper ingestion
+* Technical manuals
+* Historical drawings
+* Knowledge graph integration
 
 ---
 
+# v2.2.x
+
 ## Phase 15 — Autonomous Manufacturing & Deployment
 
-**Goal**: Close the loop from digital design to physical machine and back.
+Goal:
 
-**Why**: The ultimate feedback is a real machine running in the field.
+Close the loop between digital and physical engineering.
 
-- [ ] Manufacturing output (cut lists, weld maps, CNC programs, assembly instructions)
-- [ ] Quality assurance integration (CMM inspection points, weld inspection)
-- [ ] Commissioning and field telemetry
-- [ ] Full self-improving ecosystem: Live Telemetry → Digital Twin → Knowledge → Redesign → Manufacture → Deploy
+Deliverables:
+
+* CNC output
+* Cut lists
+* Weld maps
+* QA integration
+* Commissioning support
+* Field telemetry
+
+---
+
+# v3.0.0
+
+## AUTONOMOUS ENGINEERING INTELLIGENCE ECOSYSTEM
+
+Final Goal:
+
+The platform autonomously:
+
+Understand
+
+Design
+
+Build
+
+Simulate
+
+Predict
+
+Manufacture
+
+Deploy
+
+Observe
+
+Learn
+
+Improve
+
+Redesign
+
+Repeat
+
+A self-improving virtual engineering organisation capable of evolving mechanical systems across multiple industrial domains.
