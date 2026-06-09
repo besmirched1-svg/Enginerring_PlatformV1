@@ -1,153 +1,50 @@
 ﻿<overview>
-The user is continuing development of the OpenSCAD Autonomous Engineering Platform with the Master Goal of creating an autonomous engineering intelligence system. After implementing the AI Planning Engine and Knowledge Reasoning System, the user requested implementation of the Physics & FEA Engine as the largest remaining architectural gap. This has now been completed with six comprehensive modules covering shafts, bearings, frames, rotors, fatigue, and vibration analysis. The user is now asking for the next logical implementation step.
+The user is developing an autonomous engineering intelligence platform. The project has reunified its architecture by merging Machine Graph, Drawing Intelligence, Simulation, and Domain Intelligence onto the main development branch alongside the existing core evolution, physics/FEA, and digital twin systems. Phase 1 hardening is now complete. Current: v0.4.0.
 </overview>
 
 <history>
-1. User shared detailed analysis file comparing current implementation to Master Goal
-   - Reviewed comprehensive gap analysis showing completed vs. missing components
-   - Identified AI Planning Engine as #1 missing component
-   - Identified Knowledge Reasoning System as #2 priority
+1. Physics & FEA Engine implemented with 6 modules
+   - Thermal effects added to shafts.py, frames.py, rotors.py
+   - bearings.py, fatigue.py, vibration.py pending thermal enhancement
 
-2. Implemented AI Planning Engine
-   - Created app/core/planning_engine.py with goal decomposition, constraint reasoning, strategy generation
-   - Maintained backward compatibility with existing AIReasoningPlanner
-   - Verified functionality through testing
+2. Digital Twin system implemented (wear, fatigue, reliability, MTBF)
 
-3. Implemented Knowledge Reasoning System
-   - Created app/knowledge/knowledge_store.py with append-only NDJSON storage
-   - Added pattern learning from historical design outcomes
-   - Implemented automatic outcome prediction and self-improving heuristics
-   - Integrated with planning engine for closed-loop learning potential
+3. Architecture divergence resolved: Machine Graph (models, compiler), Drawing Intelligence (ingestor, OCR, BOM, dimensions, assembly), Simulation (mass balance engine), and Hemp Domain Intelligence were on separate branch — merged cleanly into pre-production-backup
 
-4. User shared detailed vision assessment dividing remaining work into Category A (Core Vision) and Category B (Enhancements)
-   - Category A: Physics & FEA Engine, Digital Twin, Multi-objective Optimization, Manufacturing Intelligence, Specialized Agent Swarm
-   - Category B: Hardware Feedback Loop, Factory-Level Graphs, Automated Fabrication Documentation, Patent/Literature Import, Compliance Layer, Engineering Experiment Manager
-   - Provided completion percentage estimates for various areas
+4. Documentation: CURRENT_STATE_AND_ROADMAP.md rewritten (v0.3.0), MASTER_PROMPT.md created
 
-5. User requested implementation of everything but agreed to pragmatic approach
-   - Recommended starting with Distributed Worker Architecture as highest-leverage next step
-   - Explained full Master Goal implementation requires years of work
-   - User insisted on starting with Physics & FEA Engine as the largest architectural gap
+5. Phase 1 Hardening complete:
+   - Task 3 (Redis resilience): Already implemented
+   - Task 6 (Event bus): Non-blocking emits with timeout and dropped-event metrics
+   - Task 7 (Logging): All 50 loggers standardized, print() removed
 
-6. Implemented Physics & FEA Engine (current focus)
-   - Created app/physics/ directory with six modules:
-     * shafts.py - torsional/bending stress, deflection, twist analysis
-     * bearings.py - load calculations, life prediction, friction analysis per ISO 281
-     * frames.py - axial/shear/bending/torsional stress, buckling, deflection
-     * rotors.py - moment of inertia, critical speed, imbalance response, twist analysis
-     * fatigue.py - endurance limit, mean stress correction, Basquin's equation, Miner's rule
-     * vibration.py - natural frequency, damping, forced vibration response, transmissibility
-   - All modules include proper error handling, logging, type hints, docstrings
-   - Verified all modules import successfully and provide basic functionality
-   - Created README.md documentation for the physics package
+6. Tags: v0.3.0-architecture-unified, v0.4.0-phase1-hardening-complete
 
-7. User requested next logical implementation step after Physics & FEA Engine completion
+7. Repository pushed to GitLab
 </history>
 
 <work_done>
-Files created:
-- app/physics/shafts.py - Shaft analysis module (15,099 chars)
-- app/physics/bearings.py - Bearing analysis module (19,629 chars)
-- app/physics/frames.py - Frame analysis module (24,250 chars)
-- app/physics/rotors.py - Rotor analysis module (24,283 chars)
-- app/physics/fatigue.py - Fatigue analysis module (27,587 chars)
-- app/physics/vibration.py - Vibration analysis module (20,927 chars)
-- app/physics/__init__.py - Package initialization (1,299 chars)
-- app/physics/README.md - Documentation (4,918 chars)
-
-Work completed:
-- [x] Physics & FEA Engine implementation with all six modules
-- [x] All modules verified to import successfully
-- [x] Basic functionality testing completed for each module
-- [x] Proper error handling, logging, and documentation implemented
-- [x] Ready for integration with existing platform systems
-
-Current state: Physics & FEA Engine is fully implemented and operational, addressing the largest architectural gap in the Master Goal vision.
+- CURRENT_STATE_AND_ROADMAP.md — Complete rewrite
+- MASTER_PROMPT.md — New file with self-regenerating engine specification
+- app/realtime/events.py — Non-blocking _safe_emit() with timeout + metrics
+- app/workers/tasks.py — Logger name fix
+- app/core/optimization/multi_objective_optimizer.py — print() replaced with logger
+- Branch merge: main → pre-production-backup (75 files, clean merge)
 </work_done>
 
 <technical_details>
-- Engineering Standards: Modules implement established engineering formulas (ISO 281 for bearings, Euler buckling for frames, Goodman/Gerber/Soderberg for fatigue correction, etc.)
-- Unit Consistency: Careful attention to unit conversions (N*m to N*mm, mm to m, etc.) throughout calculations
-- Error Handling: Each module includes comprehensive error checking with logging for invalid inputs (zero/negative dimensions, etc.)
-- Data Structures: Consistent use of dataclasses for inputs (geometry, loads) and outputs (results) across all modules
-- Logging: Standardized logger naming convention (engine.physics.{module}) for traceability
-- Type Hints: Full type annotations for function parameters and return values
-- Documentation: Comprehensive docstrings explaining formulas, assumptions, and engineering basis for each function
-- Integration Ready: Designed to work with existing platform's geometry and load systems through standardized interfaces
-- Conservative Assumptions: Where simplifications were made, they err on the side of safety (typical in engineering analysis)
-- Extensibility: Modular design allows for easy enhancement (e.g., adding more complex geometries, non-linear materials)
+Version: v0.4.0. Branch: pre-production-backup. All 7 layers present. 31 completed features. 50 loggers standardized. 20 passing tests.
 </technical_details>
 
-<important_files>
-- app/physics/__init__.py
-  - Why it matters: Makes the physics package importable as app.physics
-  - Changes made: Created new file exporting all main classes and functions
-  - Key lines: 1-25 (import statements and __all__ list)
-
-- app/physics/shafts.py
-  - Why it matters: First module implemented, handles fundamental shaft analysis
-  - Changes made: Created new file with complete shaft analysis capabilities
-  - Key sections: Stress calculation methods (lines ~50-120), deflection methods (lines ~120-180), main analysis method (lines ~180-250)
-
-- app/physics/bearings.py
-  - Why it matters: Implements bearing analysis per ISO 281 standards
-  - Changes made: Created new file with bearing life prediction and friction analysis
-  - Key sections: Load calculation methods (lines ~40-100), life prediction (lines ~100-160), friction/power loss (lines ~160-220)
-
-- app/physics/frames.py
-  - Why it matters: Structural analysis including buckling prevention
-  - Changes made: Created new file with comprehensive frame/member analysis
-  - Key sections: Stress calculation methods (lines ~40-120), buckling calculation (lines ~200-230), deflection methods (lines ~230-300)
-
-- app/physics/rotors.py
-  - Why it matters: Rotor dynamics and critical speed analysis
-  - Changes made: Created new file with rotor imbalance and vibration analysis
-  - Key sections: Inertia calculations (lines ~30-80), critical speed methods (lines ~80-140), imbalance response (lines ~140-200)
-
-- app/physics/fatigue.py
-  - Why it matters: Fatigue life prediction using multiple established methods
-  - Changes made: Created new file with S-N curve and Miner's rule implementation
-  - Key sections: Endurance limit (lines ~30-80), mean stress correction (lines ~80-140), life prediction (lines ~140-200), damage calculation (lines ~200-260)
-
-- app/physics/vibration.py
-  - Why it matters: Modal and forced vibration analysis capabilities
-  - Changes made: Created new file with vibration response and transmissibility analysis
-  - Key sections: Frequency/damping calculations (lines ~30-100), forced response (lines ~100-180), transmissibility (lines ~180-220)
-
-- app/physics/README.md
-  - Why it matters: Documentation for the physics package
-  - Changes made: Created comprehensive documentation covering all modules
-  - Key sections: Module descriptions (lines ~20-80), usage examples (lines ~80-120), design philosophy (lines ~120-160)
-</important_files>
-
 <next_steps>
-Remaining work based on user's vision assessment:
-- Digital Twin (Category A, #2 priority): Time-domain operation simulation, wear/fatigue modeling, maintenance prediction, reliability engineering
-- Multi-objective Optimization (Category A, #3 priority): Pareto-front optimization of competing objectives (fiber recovery, quality, power, weight, cost, maintenance, reliability)
-- Manufacturing Intelligence (Category A, #4 priority): Cut lists, weld maps, assembly instructions, fabrication hours, serviceability
-- Specialized Agent Swarm expansion (Category A, #5 priority): Adding Reliability, Physics, Compliance, Digital Twin agents to existing Designer/Validator/Optimizer/Manufacturing/Cost/Promotion agents
-- Category B enhancements: Hardware feedback loop, factory-level graphs, automated fabrication documentation, etc.
-
-Immediate next steps for Digital Twin implementation:
-1. Create app/digital_twin/ directory structure
-2. Implement Machine Graph representation (nodes=components, edges=interactions)
-3. Build Virtual Machine simulator using physics models for time-domain operation
-4. Add wear modeling (archard, adhesive, abrasive wear models)
-5. Implement fatigue damage accumulation over time (using physics/fatigue.py)
-6. Create maintenance prediction based on wear/fatigue thresholds
-7. Add reliability engineering calculations (MTBF, failure rate modeling)
-8. Enable "Operate for 1000 hours → Predict failures" workflow
-9. Integrate with planning engine for physics-informed design strategies
-10. Connect to knowledge system for learning from operational data
-
-Blockers/Open Questions:
-- Determine optimal fidelity level for real-time simulation vs. accuracy
-- Decide on wear modeling complexity (simple Archard vs. multi-mechanism)
-- Choose failure prediction approach (threshold-based vs. probabilistic)
-- Define interface between Digital Twin and existing physics modules
-- Determine data storage requirements for operational history
+1. Thermal effects on bearings.py, fatigue.py, vibration.py
+2. Tag v0.9.0-physics-complete, freeze Physics v1.0
+3. Manufacturing Intelligence (cut lists, weld maps, costing)
+4. Autonomous Engineering Director
+5. Multi-Objective Pareto Optimization
+6. Specialized Agent Ecosystem
 </next_steps>
 
 <checkpoint_title>
-Physics & FEA Engine Implementation
-</checkpoint_title>
+Phase 1 Hardening Complete — v0.4.0
+</checkpoint>
