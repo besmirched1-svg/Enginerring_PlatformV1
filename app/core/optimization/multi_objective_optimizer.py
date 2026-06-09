@@ -32,24 +32,45 @@ class Individual:
     dominated_count: int = 0
     dominated_set: List['Individual'] = field(default_factory=list)
     
-    def dominates(self, other: 'Individual') -> bool:
-        """Check if this individual dominates another."""
+    def dominates(self, other: 'Individual', minimize_flags: Optional[List[bool]] = None) -> bool:
+        """Check if this individual dominates another.
+
+        Args:
+            other: Individual to compare against.
+            minimize_flags: List of bool per objective (True=minimize, False=maximize).
+                If None, assumes all minimize (backward compatible).
+
+        Returns:
+            True if this individual dominates other.
+        """
         if len(self.objectives) != len(other.objectives):
             raise ValueError("Individuals must have same number of objectives")
-            
+
+        n = len(self.objectives)
+        if minimize_flags is None:
+            minimize_flags = [True] * n
+        if len(minimize_flags) != n:
+            raise ValueError("minimize_flags length must match objectives")
+
         better_in_any = False
-        for self_obj, other_obj in zip(self.objectives, other.objectives):
-            # For now assume all objectives are to be minimized
-            if self_obj > other_obj:  # We are worse in this objective
+        for i in range(n):
+            a = self.objectives[i]
+            b = other.objectives[i]
+            if minimize_flags[i]:
+                a_better = a < b
+                a_worse = a > b
+            else:
+                a_better = a > b
+                a_worse = a < b
+            if a_worse:
                 return False
-            elif self_obj < other_obj:  # We are better in this objective
+            if a_better:
                 better_in_any = True
-                
         return better_in_any
-    
-    def is_dominated_by(self, other: 'Individual') -> bool:
+
+    def is_dominated_by(self, other: 'Individual', minimize_flags: Optional[List[bool]] = None) -> bool:
         """Check if this individual is dominated by another."""
-        return other.dominates(self)
+        return other.dominates(self, minimize_flags=minimize_flags)
 
 
 @dataclass
@@ -70,14 +91,20 @@ class OptimizationResult:
         return [ind.parameters for ind in self.pareto_front]
 
 
-def fast_nondominated_sort(population: List[Individual]) -> List[List[Individual]]:
+def fast_nondominated_sort(
+    population: List[Individual],
+    minimize_flags: Optional[List[bool]] = None,
+) -> List[List[Individual]]:
     """
     Fast non-dominated sorting algorithm (O(MN^2) where M is objectives, N is population size).
     Returns fronts sorted by dominance rank.
     """
     if not population:
         return []
-        
+
+    if minimize_flags is None and population and population[0].objectives:
+        minimize_flags = [True] * len(population[0].objectives)
+
     fronts = [[]]
     
     for i, p in enumerate(population):
@@ -88,9 +115,9 @@ def fast_nondominated_sort(population: List[Individual]) -> List[List[Individual
             if i == j:
                 continue
                 
-            if p.dominates(q):
+            if p.dominates(q, minimize_flags=minimize_flags):
                 p.dominated_set.append(q)
-            elif q.dominates(p):
+            elif q.dominates(p, minimize_flags=minimize_flags):
                 p.dominated_count += 1
                 
         if p.dominated_count == 0:

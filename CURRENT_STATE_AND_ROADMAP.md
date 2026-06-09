@@ -1,8 +1,8 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
 **Last Updated**: June 9, 2026  
-**Status**: Phase 4 Engineering Director Complete — 4 Modules, 17 Tests  
-**Version**: v1.0.0 (Alpha)
+**Status**: Phase 5 Multi-Objective Optimization Complete — Pareto front integrated into Director  
+**Version**: v1.1.0 (Alpha)
 
 ---
 
@@ -446,9 +446,9 @@
 | v0.9.0 | Physics Engine v1.0 Freeze + Tag | ✅ Done |
 | v0.9.5 | Manufacturing Intelligence | ✅ Done |
 | v1.0.0 | Autonomous Engineering Director | ✅ Done |
-| v1.1.0 | Multi-Objective Optimization (NSGA-II) | 🔲 |
-| v1.1.0 | Multi-Objective Optimization | 🔲 |
-| v1.2.0 | Specialized Agent Ecosystem | 🔲 |
+| v1.1.0 | Multi-Objective Optimization (NSGA-II) | ✅ Done |
+| v1.1.0 | Multi-Objective Optimization | ✅ Done |
+| v1.2.0 | Specialized Agent Ecosystem | 🔲 Current |
 | v1.3.0 | Hardware Feedback Foundation | 🔲 |
 | v2.0.0 | Autonomous Engineering Intelligence Platform | 🔲 |
 
@@ -464,6 +464,7 @@
 6. **Physics Thermal Partial** — 3 of 6 modules have thermal effects (bearings, fatigue, vibration pending)
 7. ~~**No Manufacturing Intelligence**~~ — ✅ Resolved (Phase 3 complete — 7 modules, 23 tests)
 8. ~~**No Engineering Director**~~ — ✅ Resolved (Phase 4 — 4 modules, 17 tests)
+9. **Director Uses Mock Physics/CAD** — Actual modules not yet wired into pipeline
 
 ---
 
@@ -471,8 +472,8 @@
 
 | Metric | Previous | Current | Target |
 | --- | --- | --- | --- |
-| Test Count | 212 | 229 | 300 |
-| Test Coverage | ~65% | ~80% | 85% |
+| Test Count | 229 | 267 | 350 |
+| Test Coverage | ~80% | ~82% | 85% |
 | Edge Cases | 16 | 16 | 25 |
 | Bounds Validation Layers | 3 | 3 | 3 |
 | Documentation | 95% | 95% | 100% |

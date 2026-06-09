@@ -36,6 +36,8 @@ class EngineeringPackAssembler:
         digital_twin_result: Any = None,
         manufacturing: Optional[ManufacturingResult] = None,
         evaluation_score: float = 0.0,
+        objective_vector: Optional[List[float]] = None,
+        objective_names: Optional[List[str]] = None,
         champion: Optional[Dict[str, Any]] = None,
         artifacts: Optional[Dict[str, str]] = None,
         errors: Optional[List[str]] = None,
@@ -53,6 +55,8 @@ class EngineeringPackAssembler:
             digital_twin_result=digital_twin_result,
             manufacturing=manufacturing or ManufacturingResult(),
             evaluation_score=evaluation_score,
+            objective_vector=objective_vector or [],
+            objective_names=objective_names or [],
             champion=champion or {},
             artifacts=artifacts or {},
             errors=errors or [],
@@ -80,6 +84,10 @@ class EngineeringPackAssembler:
         lines.append(f"  Machine Type:   {pack.goal.machine_type}")
         lines.append(f"  Plan Steps:     {pack.plan.total_steps}")
         lines.append(f"  Evaluation:     {pack.evaluation_score:.3f}")
+
+        if pack.objective_vector:
+            parts = [f"{n}={v:.2f}" for n, v in zip(pack.objective_names, pack.objective_vector)]
+            lines.append(f"  Objectives:     {', '.join(parts)}")
 
         if pack.physics:
             lines.append(f"  Shaft SF:       {pack.physics.shaft_safety_factor:.2f}")
@@ -118,6 +126,8 @@ def assemble_engineering_pack(
     digital_twin_result: Any = None,
     manufacturing: Optional[ManufacturingResult] = None,
     evaluation_score: float = 0.0,
+    objective_vector: Optional[List[float]] = None,
+    objective_names: Optional[List[str]] = None,
     champion: Optional[Dict[str, Any]] = None,
     artifacts: Optional[Dict[str, str]] = None,
     errors: Optional[List[str]] = None,
@@ -134,6 +144,8 @@ def assemble_engineering_pack(
         digital_twin_result=digital_twin_result,
         manufacturing=manufacturing,
         evaluation_score=evaluation_score,
+        objective_vector=objective_vector,
+        objective_names=objective_names,
         champion=champion,
         artifacts=artifacts,
         errors=errors,

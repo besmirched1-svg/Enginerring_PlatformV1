@@ -233,3 +233,14 @@ def get_event_metrics() -> dict[str, Any]:
     if isinstance(bus, RedisEventBus):
         return bus._metrics.get_metrics()
     return {"status": "metrics_unavailable", "bus_type": type(bus).__name__}
+
+
+# ---------------------------------------------------------------------------
+# Director event type constants
+# ---------------------------------------------------------------------------
+
+DIRECTOR_QUEUED = "director_queued"
+DIRECTOR_STAGE = "director_stage"
+DIRECTOR_STAGE_COMPLETE = "director_stage_complete"
+DIRECTOR_COMPLETE = "director_complete"
+DIRECTOR_FAILED = "director_failed"

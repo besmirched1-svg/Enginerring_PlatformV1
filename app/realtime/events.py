@@ -17,6 +17,7 @@ OPT_NS = "/optimizer"
 SWARM_NS = "/swarm"
 CAD_NS = "/cad"
 PLAN_NS = "/planner"
+DIRECTOR_NS = "/director"
 
 # Metrics
 _dropped_events = 0
@@ -87,6 +88,18 @@ async def planner_connect(sid, environ):
 async def emit_planner_event(event_type, payload):
     await _safe_emit(PLAN_NS, event_type, payload)
 
+# --- Director Events ---
+@sio.on("connect", namespace=DIRECTOR_NS)
+async def director_connect(sid, environ):
+    logger.debug(f"Director client connected: {sid}")
+
+@sio.on("disconnect", namespace=DIRECTOR_NS)
+async def director_disconnect(sid):
+    logger.debug(f"Director client disconnected: {sid}")
+
+async def emit_director_event(event_type, payload):
+    await _safe_emit(DIRECTOR_NS, event_type, payload)
+
 # --- EventBus → Socket.IO Telemetry Router ---
 async def route_event_to_socketio(event_type, payload):
     et = str(event_type).lower()
@@ -109,6 +122,9 @@ async def route_event_to_socketio(event_type, payload):
 
         elif "planner" in et or "reason" in et:
             await emit_planner_event("reasoning_step", payload)
+
+        elif "director" in et:
+            await emit_director_event(event_type, payload)
 
         else:
             await emit_optimizer_event(event_type, payload)

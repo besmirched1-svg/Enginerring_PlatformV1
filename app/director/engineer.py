@@ -5,7 +5,16 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from app.core.events import (
+    DIRECTOR_COMPLETE,
+    DIRECTOR_FAILED,
+    DIRECTOR_QUEUED,
+    DIRECTOR_STAGE,
+    DIRECTOR_STAGE_COMPLETE,
+    publish as _publish_event,
+)
 
 from .models import (
     DesignStage,
@@ -34,11 +43,39 @@ class EngineerDirector:
     This is the top-level entry point for the autonomous platform.
     """
 
-    def __init__(self, output_dir: str = "./outputs/director"):
+    def __init__(
+        self,
+        output_dir: str = "./outputs/director",
+        job_id: str = "",
+        on_status: Optional[Callable[[str, float, str], None]] = None,
+    ):
         self.output_dir = output_dir
+        self._job_id = job_id
+        self._on_status = on_status
         self.planner = EngineeringPlanner()
         self.packer = EngineeringPackAssembler()
         self.stage_log: List[Dict[str, Any]] = []
+
+    # ------------------------------------------------------------------
+    # Event helpers
+    # ------------------------------------------------------------------
+
+    def _status(self, stage: str, progress: float, message: str) -> None:
+        if self._on_status:
+            try:
+                self._on_status(stage, progress, message)
+            except Exception:
+                pass
+
+    def _publish(self, event_type: str, **extra: Any) -> None:
+        try:
+            _publish_event(event_type, {"job_id": self._job_id, **extra})
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Main pipeline
+    # ------------------------------------------------------------------
 
     def run(self, goal: EngineeringGoal) -> DirectorResult:
         start_time = time.time()
@@ -50,10 +87,15 @@ class EngineerDirector:
         logger.info("Goal: %s", goal.prompt)
         logger.info("Machine type: %s", goal.machine_type)
 
+        self._publish(DIRECTOR_QUEUED, stage="init", prompt=goal.prompt, machine_type=goal.machine_type)
+        self._status("init", 0.0, "Pipeline queued")
+
         result = DirectorResult()
         errors: List[str] = []
 
         # --- Stage 1: Planning ---
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.PLANNING.value, description="Generating engineering plan")
+        self._status("planning", 0.1, "Generating engineering plan")
         plan = self._run_stage(
             DesignStage.PLANNING,
             "Generating engineering plan",
@@ -61,7 +103,10 @@ class EngineerDirector:
             errors,
         )
         if not plan:
+            self._publish(DIRECTOR_FAILED, stage=DesignStage.PLANNING.value, error="Planning failed")
+            self._status("failed", 0.0, "Planning failed")
             return self._finalize(result, errors, start_time)
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.PLANNING.value)
 
         # --- Stage 2-10: Execute pipeline ---
         machine_config = goal.constraints.copy()
@@ -78,30 +123,48 @@ class EngineerDirector:
         champion: Dict[str, Any] = {}
 
         # CAD generation (simulated via config for now)
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.CAD_GENERATION.value, description="Generating CAD files")
+        self._status("cad", 0.3, "Generating CAD files")
         for task in plan.tasks:
             if task.stage == DesignStage.CAD_GENERATION:
                 cad_files[task.description] = f"{task.module}_output.scad"
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.CAD_GENERATION.value, files=len(cad_files))
 
         # BOM generation
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.BOM_GENERATION.value, description="Generating BOM")
+        self._status("bom", 0.4, "Generating BOM")
         bom_file = "outputs/BOM/assembly_bom.csv"
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.BOM_GENERATION.value)
 
         # Physics analysis (run all enabled physics modules)
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.PHYSICS_ANALYSIS.value, description="Running physics analysis")
+        self._status("physics", 0.5, "Running physics analysis")
         physics = self._run_physics(goal)
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.PHYSICS_ANALYSIS.value, passed=physics.passed)
 
         # Manufacturing analysis
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.MANUFACTURING_ANALYSIS.value, description="Running manufacturing analysis")
+        self._status("manufacturing", 0.7, "Running manufacturing analysis")
         manufacturing = self._run_manufacturing(goal)
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.MANUFACTURING_ANALYSIS.value, passed=manufacturing.passed)
 
         # Evaluation
-        evaluation_score = self._evaluate(physics, manufacturing, goal)
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.EVALUATION.value, description="Evaluating design")
+        self._status("evaluation", 0.8, "Evaluating design")
+        evaluation_score, objective_vector, objective_names = self._evaluate(physics, manufacturing, goal)
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.EVALUATION.value, score=evaluation_score, obj_count=len(objective_vector))
 
         # Champion tracking
         champion = {
             "machine_name": goal.machine_type,
             "score": evaluation_score,
+            "objectives": {name: val for name, val in zip(objective_names, objective_vector)},
             "config": machine_config,
         }
 
         # --- Final Stage: Pack Assembly ---
+        self._publish(DIRECTOR_STAGE, stage=DesignStage.PACK_ASSEMBLY.value, description="Assembling engineering pack")
+        self._status("packing", 0.9, "Assembling engineering pack")
         pack = self.packer.assemble(
             goal=goal,
             plan=plan,
@@ -113,10 +176,13 @@ class EngineerDirector:
             digital_twin_result=dt_result,
             manufacturing=manufacturing,
             evaluation_score=evaluation_score,
+            objective_vector=objective_vector,
+            objective_names=objective_names,
             champion=champion,
             artifacts=cad_files,
             errors=errors,
         )
+        self._publish(DIRECTOR_STAGE_COMPLETE, stage=DesignStage.PACK_ASSEMBLY.value, passed=pack.passed)
 
         elapsed = time.time() - start_time
         logger.info("=" * 60)
@@ -124,6 +190,13 @@ class EngineerDirector:
         logger.info("Evaluation score: %.3f", evaluation_score)
         logger.info("Status: %s", "PASSED" if pack.passed else "FAILED")
         logger.info("=" * 60)
+
+        if pack.passed:
+            self._publish(DIRECTOR_COMPLETE, score=evaluation_score, elapsed_s=elapsed)
+            self._status("complete", 1.0, "Pipeline complete")
+        else:
+            self._publish(DIRECTOR_FAILED, stage="complete", error="Pipeline completed with errors")
+            self._status("failed", 0.0, "Pipeline completed with errors")
 
         return DirectorResult(
             pack=pack,
@@ -142,6 +215,7 @@ class EngineerDirector:
         errors: List[str],
     ) -> Any:
         logger.info("[%s] %s...", stage.value.upper(), description)
+        self._publish(DIRECTOR_STAGE, stage=stage.value, description=description)
         t0 = time.time()
         try:
             result = fn()
@@ -149,6 +223,7 @@ class EngineerDirector:
             logger.info(
                 "[%s] Complete in %.1fs", stage.value.upper(), elapsed
             )
+            self._publish(DIRECTOR_STAGE_COMPLETE, stage=stage.value, elapsed_s=elapsed)
             self.stage_log.append({
                 "stage": stage.value,
                 "description": description,
@@ -161,6 +236,7 @@ class EngineerDirector:
             msg = f"{stage.value} failed: {e}"
             logger.error(msg)
             errors.append(msg)
+            self._publish(DIRECTOR_FAILED, stage=stage.value, error=str(e))
             self.stage_log.append({
                 "stage": stage.value,
                 "description": description,
@@ -169,6 +245,66 @@ class EngineerDirector:
                 "error": str(e),
             })
             return None
+
+    # ------------------------------------------------------------------
+    # Pareto-aware objectives
+    # ------------------------------------------------------------------
+
+    def _compute_objective_vector(
+        self,
+        physics: PhysicsResult,
+        manufacturing: ManufacturingResult,
+    ) -> tuple[List[float], List[str]]:
+        """Build an objective vector from physics + manufacturing results.
+
+        Each objective is a float where higher = better after transformation.
+        Names are returned for display / Pareto analysis.
+        """
+        names = [
+            "shaft_safety",
+            "frame_safety",
+            "rotor_safety",
+            "bearing_life",
+            "fatigue_safety",
+            "cost_efficiency",
+            "serviceability",
+            "material_utilisation",
+        ]
+        bearing = min(1.0, physics.bearing_life_hours / 50000.0)
+        cost_eff = 1.0 - min(1.0, manufacturing.total_build_cost_aud / 100000.0)
+        values = [
+            min(1.0, physics.shaft_safety_factor / 3.0),
+            min(1.0, physics.frame_safety_factor / 3.0),
+            min(1.0, physics.rotor_safety_factor / 3.0),
+            bearing,
+            min(1.0, physics.fatigue_safety_factor / 3.0),
+            max(0.0, cost_eff),
+            min(1.0, manufacturing.serviceability_index / 100.0),
+            min(1.0, manufacturing.material_utilisation / 100.0),
+        ]
+        return values, names
+
+    def _pareto_score(
+        self,
+        objectives: List[float],
+        ideal: List[float],
+        nadir: List[float],
+    ) -> float:
+        """Score an individual by its normalised distance to the ideal point.
+
+        Uses Euclidean distance in normalised objective space.
+        Returns 0.0-1.0 where 1.0 = at the ideal point.
+        """
+        if not objectives or not ideal or not nadir:
+            return 0.0
+        eps = 1e-12
+        dist_sum = 0.0
+        for o, i, n in zip(objectives, ideal, nadir):
+            rng = n - i
+            norm = (o - i) / (rng if abs(rng) > eps else 1.0)
+            dist_sum += max(0.0, min(1.0, norm)) ** 2
+        # Normalise so max possible distance = 1.0 per objective
+        return 1.0 - (dist_sum / len(objectives)) ** 0.5
 
     def _run_physics(self, goal: EngineeringGoal) -> PhysicsResult:
         logger.info("Running physics analysis suite...")
@@ -244,36 +380,31 @@ class EngineerDirector:
         physics: PhysicsResult,
         manufacturing: ManufacturingResult,
         goal: EngineeringGoal,
-    ) -> float:
-        score = 0.0
+    ) -> tuple[float, List[float], List[str]]:
+        """Evaluate design using Pareto-aware multi-objective scoring.
 
-        if physics.passed:
-            score += 0.30
+        Returns (composite_score, objective_vector, objective_names).
+        The composite score is a distance-to-ideal metric in normalised
+        objective space, replacing the old weighted sum heuristic.
+        """
+        values, names = self._compute_objective_vector(physics, manufacturing)
 
-        max_sf = max(
-            physics.shaft_safety_factor,
-            physics.frame_safety_factor,
-            physics.rotor_safety_factor,
-            physics.fatigue_safety_factor,
-        )
-        sf_score = min(1.0, max_sf / 3.0) * 0.20
-        score += sf_score
+        # Ideal = all 1.0 (best possible for each objective)
+        # Nadir = all 0.0 (worst)
+        ideal = [1.0] * len(values)
+        nadir = [0.0] * len(values)
 
-        if manufacturing.passed:
-            score += 0.20
+        score = self._pareto_score(values, ideal, nadir)
 
-        cost_ratio = 1.0
-        if goal.target_cost_aud > 0 and manufacturing.total_build_cost_aud > 0:
-            cost_ratio = min(1.0, goal.target_cost_aud / manufacturing.total_build_cost_aud)
-        score += cost_ratio * 0.15
-
-        s_index = manufacturing.serviceability_index / 100.0
-        score += s_index * 0.15
+        # Blend in constraint pass/fail as a penalty (keeps safety gate)
+        all_passed = physics.passed and manufacturing.passed
+        if not all_passed:
+            score *= 0.5
 
         score = min(1.0, max(0.0, score))
 
-        logger.info("Evaluation score: %.3f", score)
-        return score
+        logger.info("Pareto-aware score: %.3f (vector length=%d)", score, len(values))
+        return score, values, names
 
     def _finalize(
         self,
@@ -299,6 +430,8 @@ def run_engineering_pipeline(
     temperature_c: float = 20.0,
     target_mass_kg: float = 0.0,
     target_cost_aud: float = 0.0,
+    job_id: str = "",
+    on_status: Optional[Callable[[str, float, str], None]] = None,
 ) -> DirectorResult:
     goal = EngineeringGoal(
         prompt=prompt,
@@ -310,5 +443,5 @@ def run_engineering_pipeline(
         target_mass_kg=target_mass_kg,
         target_cost_aud=target_cost_aud,
     )
-    director = EngineerDirector()
+    director = EngineerDirector(job_id=job_id, on_status=on_status)
     return director.run(goal)

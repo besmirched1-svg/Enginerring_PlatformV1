@@ -248,3 +248,180 @@ def get_successful_configs(machine_name: str, min_score: float = 0.75):
         "min_score": min_score,
         "configs": store.successful_configs(machine_name, min_score=min_score),
     }
+
+
+# =====================================================================
+# Director API — EngineerDirector REST integration
+# =====================================================================
+#
+# Launches the autonomous engineering pipeline as a background task.
+# Status and results are pollable via GET endpoints.
+#
+# POST /api/director/run          -> starts a pipeline job
+# GET  /api/director/status/{id}  -> current stage / progress
+# GET  /api/director/result/{id}  -> final DirectorResult (when done)
+# =====================================================================
+
+import threading
+import time as time_module
+from datetime import datetime, timezone
+from pydantic import Field
+
+from app.core.events import publish as _publish_event
+
+
+class DirectorRunRequest(BaseModel):
+    prompt: str
+    machine_type: str = "hemp_roller"
+    constraints: Dict[str, Any] = {}
+    preferences: Dict[str, Any] = {}
+    max_iterations: int = 1
+    temperature_c: float = 20.0
+    target_mass_kg: float = 0.0
+    target_cost_aud: float = 0.0
+
+
+class DirectorJobInfo(BaseModel):
+    job_id: str
+    status: str  # queued | running | complete | failed
+    stage: str = ""
+    progress: float = 0.0
+    message: str = ""
+    errors: List[str] = []
+    created_at: str = ""
+    updated_at: str = ""
+
+
+# In-memory job store (thread-safe via lock)
+_jobs_lock = threading.Lock()
+_jobs: Dict[str, dict] = {}
+
+
+def _run_director_job(job_id: str, req: DirectorRunRequest) -> None:
+    """Background worker: runs the full EngineeringDirector pipeline."""
+    def on_status(stage: str, progress: float, message: str) -> None:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "stage": stage,
+                    "progress": progress,
+                    "message": message,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+    try:
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id]["status"] = "running"
+                _jobs[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        from app.director.engineer import run_engineering_pipeline
+        result = run_engineering_pipeline(
+            prompt=req.prompt,
+            machine_type=req.machine_type,
+            constraints=req.constraints,
+            preferences=req.preferences,
+            max_iterations=req.max_iterations,
+            temperature_c=req.temperature_c,
+            target_mass_kg=req.target_mass_kg,
+            target_cost_aud=req.target_cost_aud,
+            job_id=job_id,
+            on_status=on_status,
+        )
+
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "complete" if result.success else "failed",
+                    "stage": "complete" if result.success else "failed",
+                    "progress": 1.0 if result.success else 0.0,
+                    "message": "Pipeline complete" if result.success else "Pipeline failed",
+                    "errors": result.errors,
+                    "result": result,  # full DirectorResult
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+    except Exception as exc:
+        logger.exception("Director job %s crashed", job_id)
+        with _jobs_lock:
+            if job_id in _jobs:
+                _jobs[job_id].update({
+                    "status": "failed",
+                    "stage": "crashed",
+                    "progress": 0.0,
+                    "message": str(exc),
+                    "errors": [str(exc)],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                })
+
+
+@router.post("/director/run", tags=["director"])
+def start_director_run(payload: DirectorRunRequest, background_tasks: BackgroundTasks):
+    """Launch the Engineering Director pipeline as a background task."""
+    job_id = f"dir_{uuid.uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "stage": "init",
+            "progress": 0.0,
+            "message": "Job queued",
+            "errors": [],
+            "created_at": now,
+            "updated_at": now,
+            "result": None,
+        }
+
+    background_tasks.add_task(_run_director_job, job_id, payload)
+    logger.info("Director job %s queued: %s", job_id, payload.prompt)
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "prompt": payload.prompt,
+        "machine_type": payload.machine_type,
+    }
+
+
+@router.get("/director/status/{job_id}", tags=["director"])
+def get_director_status(job_id: str):
+    """Poll the current status of a director pipeline job."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "stage": job["stage"],
+        "progress": job["progress"],
+        "message": job["message"],
+        "errors": job["errors"],
+        "created_at": job["created_at"],
+        "updated_at": job["updated_at"],
+    }
+
+
+@router.get("/director/result/{job_id}", tags=["director"])
+def get_director_result(job_id: str):
+    """Retrieve the final DirectorResult once the pipeline is complete."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if job["status"] in ("queued", "running"):
+        raise HTTPException(status_code=425, detail=f"Job {job_id} is still {job['status']}")
+    result = job.get("result")
+    if result is None:
+        raise HTTPException(status_code=500, detail=f"Job {job_id} has no result")
+    return {
+        "job_id": job["job_id"],
+        "success": result.success,
+        "total_time_seconds": result.total_time_seconds,
+        "iterations": result.iterations,
+        "evaluation_score": result.pack.evaluation_score if result.pack else None,
+        "stage_log": result.stage_log,
+        "errors": result.errors,
+        "pack_summary": result.pack.summary if result.pack else "",
+    }

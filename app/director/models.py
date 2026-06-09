@@ -108,6 +108,9 @@ class EngineeringPack:
     digital_twin_result: Optional[Any] = None
     manufacturing: ManufacturingResult = field(default_factory=ManufacturingResult)
     evaluation_score: float = 0.0
+    objective_vector: List[float] = field(default_factory=list)
+    objective_names: List[str] = field(default_factory=list)
+    pareto_rank: int = 0
     champion: Dict[str, Any] = field(default_factory=dict)
     artifacts: Dict[str, str] = field(default_factory=dict)
     summary: str = ""
