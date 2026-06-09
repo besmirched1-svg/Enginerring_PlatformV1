@@ -15,7 +15,13 @@ logger = logging.getLogger("engine.telemetry.ingestor")
 class TelemetryIngestor:
     """Receives and stores telemetry sensor readings."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        digital_twin: Any = None,
+        knowledge_store: Any = None,
+    ) -> None:
+        self.digital_twin = digital_twin
+        self.knowledge_store = knowledge_store
         self.sessions: Dict[str, TelemetrySession] = {}
         self._readings_store: Dict[str, List[SensorReading]] = {}
 
@@ -27,6 +33,14 @@ class TelemetryIngestor:
             metadata=metadata or {},
         )
         self.sessions[session.session_id] = session
+        if self.knowledge_store is not None:
+            self.knowledge_store._append({
+                "record_type": "telemetry_session",
+                "machine_name": machine_id,
+                "session_id": session.session_id,
+                "status": session.status,
+                "start_time": session.start_time.isoformat(),
+            })
         logger.info("Created telemetry session %s for machine %s", session.session_id, machine_id)
         return session
 
@@ -44,6 +58,20 @@ class TelemetryIngestor:
             self._readings_store[existing.session_id] = []
         self._readings_store[existing.session_id].extend(record.readings)
         existing.reading_count += len(record.readings)
+
+        if self.digital_twin is not None:
+            try:
+                result = self.digital_twin.simulate_operation(record.machine_id, 0.0)
+                summary = result.get_summary()
+                record.predicted_values = {
+                    "reliability": summary.get("final_reliability", 0.0),
+                    "mtbf_hours": summary.get("mtbf_hours", 0.0),
+                    "critical_components": float(summary.get("critical_components_count", 0)),
+                    "maintenance_alerts": float(summary.get("maintenance_alerts_count", 0)),
+                }
+            except Exception as exc:
+                logger.warning("Digital Twin simulation failed during ingest: %s", exc)
+
         logger.info(
             "Ingested %d reading(s) into session %s (total: %d)",
             len(record.readings), existing.session_id, existing.reading_count,
@@ -58,6 +86,15 @@ class TelemetryIngestor:
         if session:
             session.end_time = datetime.now(timezone.utc)
             session.status = "closed"
+            if self.knowledge_store is not None:
+                self.knowledge_store._append({
+                    "record_type": "telemetry_session_closed",
+                    "machine_name": session.machine_id,
+                    "session_id": session.session_id,
+                    "status": session.status,
+                    "end_time": session.end_time.isoformat(),
+                    "reading_count": session.reading_count,
+                })
             logger.info("Closed telemetry session %s", session_id)
         return session
 
@@ -69,8 +106,14 @@ class TelemetryIngestor:
         self._readings_store.clear()
 
 
-def create_ingestor() -> TelemetryIngestor:
-    return TelemetryIngestor()
+def create_ingestor(
+    digital_twin: Any = None,
+    knowledge_store: Any = None,
+) -> TelemetryIngestor:
+    return TelemetryIngestor(
+        digital_twin=digital_twin,
+        knowledge_store=knowledge_store,
+    )
 
 
 if __name__ == "__main__":

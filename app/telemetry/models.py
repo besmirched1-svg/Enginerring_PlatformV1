@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.digital_twin.digital_twin import SimulationResult
 
 logger = logging.getLogger("engine.telemetry.models")
 
@@ -30,6 +33,7 @@ class TelemetryRecord:
     readings: List[SensorReading] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    predicted_values: Optional[Dict[str, float]] = None
 
 
 @dataclass

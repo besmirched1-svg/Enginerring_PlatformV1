@@ -1,4 +1,5 @@
 ﻿from __future__ import annotations
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from socketio import ASGIApp
 from app.api import routes as api_routes
 from app.api import websocket as ws_module
 from app.core.events import get_event_bus
-from app.realtime.events import sio
+from app.realtime.events import sio, route_event_to_socketio
 
 logger = logging.getLogger("engine.main")
 
@@ -19,13 +20,42 @@ UPLOADS_DIR = os.path.join(BASE_DIR, "workspace", "uploads")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 
+_sio_bridge_task: asyncio.Task | None = None
+
+async def _sio_bridge_loop() -> None:
+    """Subscribe to EventBus and route events to Socket.IO namespaces."""
+    bus = get_event_bus()
+    if isinstance(bus, ws_module.NullEventBus):
+        logger.info("NullEventBus: Socket.IO bridge will not forward events")
+        return
+    while True:
+        try:
+            async for event in bus.subscribe():
+                if event:
+                    et = event.get("type", "")
+                    payload = event.get("payload", {})
+                    await route_event_to_socketio(et, payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Socket.IO bridge crashed; retrying in 2s")
+            await asyncio.sleep(2)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _sio_bridge_task
     bus = get_event_bus()
     logger.info("Event bus ready: %s", type(bus).__name__)
     await ws_module.start_bridge()
+    _sio_bridge_task = asyncio.create_task(_sio_bridge_loop(), name="sio-bridge")
     logger.info("Application startup complete.")
     yield
+    if _sio_bridge_task is not None and not _sio_bridge_task.done():
+        _sio_bridge_task.cancel()
+        try:
+            await _sio_bridge_task
+        except asyncio.CancelledError:
+            pass
     await ws_module.stop_bridge()
     logger.info("Application shutdown complete.")
 

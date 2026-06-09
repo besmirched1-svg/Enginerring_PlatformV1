@@ -668,3 +668,101 @@ def generate_feedback(session_id: str):
         "triggers_generated": len(triggers),
         "triggers": triggers,
     }
+
+
+@router.post("/telemetry/feedback-loop/{session_id}", tags=["telemetry"])
+def run_feedback_loop(session_id: str, payload: AnalyzeRequest = AnalyzeRequest()):
+    """Run the full hardware feedback loop for a session:
+
+    1. Load session readings
+    2. Query Digital Twin for predictions
+    3. Detect deviations
+    4. Generate improvement triggers
+    5. Fire improvement controller
+    """
+    from app.digital_twin.digital_twin import create_default_digital_twin
+    from app.knowledge.store import get_knowledge_store
+    from app.telemetry.ingestor import TelemetryIngestor
+    from app.telemetry.analyzer import DeviationAnalyzer
+    from app.telemetry.feedback import FeedbackTrigger
+    from app.core.improvement_controller import ImprovementLoopController
+    from app.core.events import get_event_bus
+
+    ingestor = _get_telemetry_ingestor()
+    session = ingestor.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    # Wire up DT, KS, and IC for the full loop
+    dt = create_default_digital_twin()
+    ks = get_knowledge_store()
+    event_bus = get_event_bus()
+    try:
+        from app.core.orchestrator import EngineeringOrchestrator
+        orchestrator = EngineeringOrchestrator(event_bus)
+    except Exception:
+        orchestrator = None
+    try:
+        import redis
+        ic = ImprovementLoopController(redis.Redis(), orchestrator)
+    except Exception:
+        ic = None
+
+    # Step 1: Run DT simulation
+    try:
+        machine_id = session.machine_id
+        dt_config = dt.get_machine_configuration(machine_id)
+        if dt_config is None:
+            from app.digital_twin.digital_twin import create_example_hemp_decotitator_config
+            example_config = create_example_hemp_decotitator_config()
+            dt.load_machine_configuration(example_config)
+        sim_result = dt.simulate_operation(machine_id if dt_config else "hemp_decorticator_001", 0.0)
+        summary = sim_result.get_summary()
+        predictions = payload.predictions or {
+            "reliability": summary.get("final_reliability", 0.0),
+            "mtbf": summary.get("mtbf_hours", 0.0),
+        }
+        predictions.update(payload.predictions)
+    except Exception as exc:
+        predictions = payload.predictions or {}
+
+    # Step 2: Detect deviations
+    readings = ingestor.get_readings(session_id)
+    session._readings = readings
+    analyzer = DeviationAnalyzer(knowledge_store=ks)
+    deviations = analyzer.analyze(session, predictions, payload.tolerances)
+    for d in deviations:
+        _publish_event("telemetry_deviation_detected", {
+            "session_id": session_id,
+            "machine_id": d.machine_id,
+            "component": d.component,
+            "metric": d.metric,
+            "deviation_pct": d.deviation_pct,
+            "severity": d.severity,
+        })
+
+    # Step 3: Generate feedback triggers and fire improvement controller
+    trigger = FeedbackTrigger(improvement_controller=ic, knowledge_store=ks)
+    triggers = trigger.evaluate(deviations)
+    for t in triggers:
+        _publish_event("telemetry_feedback_generated", t)
+
+    return {
+        "session_id": session_id,
+        "predictions_used": predictions,
+        "deviations_found": len(deviations),
+        "deviations": [
+            {
+                "component": d.component,
+                "metric": d.metric,
+                "actual_value": d.actual_value,
+                "predicted_value": d.predicted_value,
+                "deviation_pct": d.deviation_pct,
+                "severity": d.severity,
+                "description": d.description,
+            }
+            for d in deviations
+        ],
+        "triggers_generated": len(triggers),
+        "triggers": triggers,
+    }

@@ -101,13 +101,47 @@ async def director_disconnect(sid):
 async def emit_director_event(event_type, payload):
     await _safe_emit(DIRECTOR_NS, event_type, payload)
 
-# --- EventBus → Socket.IO Telemetry Router ---
-async def route_event_to_socketio(event_type, payload):
+# --- Default namespace (dashboard.html listens here) ---
+@sio.on("connect")
+async def default_connect(sid, environ):
+    logger.debug(f"Dashboard client connected: {sid}")
+
+@sio.on("disconnect")
+async def default_disconnect(sid):
+    logger.debug(f"Dashboard client disconnected: {sid}")
+
+async def emit_default_event(event_type: str, payload: dict) -> None:
+    """Emit on the default (/) namespace — used by dashboard.html."""
+    await _safe_emit("/", event_type, payload)
+
+
+# --- Telemetry Events ---
+@sio.on("connect", namespace=TELEMETRY_NS)
+async def telemetry_connect(sid, environ):
+    logger.debug(f"Telemetry client connected: {sid}")
+
+@sio.on("disconnect", namespace=TELEMETRY_NS)
+async def telemetry_disconnect(sid):
+    logger.debug(f"Telemetry client disconnected: {sid}")
+
+async def emit_telemetry_event(event_type: str, payload: dict) -> None:
+    await _safe_emit(TELEMETRY_NS, event_type, payload)
+
+
+# --- EventBus → Socket.IO Router ---
+async def route_event_to_socketio(event_type: str, payload: dict) -> None:
+    """
+    Route an EventBus event to the appropriate Socket.IO namespace(s).
+
+    Dashboard clients on the default (/) namespace receive metric and STL
+    events so the HTML UI stays live.
+    """
     et = str(event_type).lower()
 
     try:
         if "evaluation" in et or "score" in et or "validation" in et:
             await emit_optimizer_event("score_update", payload)
+            await emit_default_event(event_type, payload)
 
         elif "mutation" in et or "design" in et:
             await emit_optimizer_event("mutation", payload)
@@ -117,9 +151,11 @@ async def route_event_to_socketio(event_type, payload):
 
         elif "cad" in et or "stl" in et:
             await emit_cad_event("stl_ready", payload)
+            await emit_default_event(event_type, payload)
 
         elif "revision" in et or "promoted" in et:
             await emit_cad_event("stl_ready", payload)
+            await emit_default_event(event_type, payload)
 
         elif "planner" in et or "reason" in et:
             await emit_planner_event("reasoning_step", payload)

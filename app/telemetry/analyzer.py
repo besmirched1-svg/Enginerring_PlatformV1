@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from math import isnan
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from app.telemetry.models import Deviation, SensorReading, TelemetrySession
@@ -13,7 +13,8 @@ logger = logging.getLogger("engine.telemetry.analyzer")
 class DeviationAnalyzer:
     """Compares actual telemetry against Digital Twin predictions."""
 
-    def __init__(self) -> None:
+    def __init__(self, knowledge_store: Any = None) -> None:
+        self.knowledge_store = knowledge_store
         self.deviations: Dict[str, Deviation] = {}
 
     def analyze(
@@ -54,6 +55,20 @@ class DeviationAnalyzer:
         session.deviations.extend(detected)
         if detected:
             logger.warning("Detected %d deviation(s) in session %s", len(detected), session.session_id)
+            if self.knowledge_store is not None:
+                for dev in detected:
+                    self.knowledge_store._append({
+                        "record_type": "telemetry_deviation",
+                        "machine_name": dev.machine_id,
+                        "session_id": session.session_id,
+                        "component": dev.component,
+                        "metric": dev.metric,
+                        "actual_value": dev.actual_value,
+                        "predicted_value": dev.predicted_value,
+                        "deviation_pct": dev.deviation_pct,
+                        "severity": dev.severity,
+                        "description": dev.description,
+                    })
         return detected
 
     def get_deviation(self, deviation_id: str) -> Optional[Deviation]:
@@ -86,8 +101,8 @@ class DeviationAnalyzer:
         return "low"
 
 
-def create_analyzer() -> DeviationAnalyzer:
-    return DeviationAnalyzer()
+def create_analyzer(knowledge_store: Any = None) -> DeviationAnalyzer:
+    return DeviationAnalyzer(knowledge_store=knowledge_store)
 
 
 if __name__ == "__main__":

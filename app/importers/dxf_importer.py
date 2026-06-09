@@ -1,4 +1,5 @@
-﻿import re
+﻿import os
+import re
 import logging
 from pathlib import Path
 from app.core.orchestrator import EngineeringOrchestrator
@@ -19,12 +20,13 @@ def import_dxf(file_path: Path):
     out_scad_path = scad_dir / f"{file_path.stem}_profile.scad"
     
     # Standard engineering boilerplate for extruding 2D DXF profiles in OpenSCAD
+    dxf_import_path = str(file_path.absolute()).replace(os.sep, "/")
     scad_content = f"""// Automated DXF Profile Translation
 // Source Asset: {file_path.name}
 
 module dxf_extrusion_layer() {{
     linear_extrude(height = 20, center = true, convexity = 10) {{
-        import("{str(file_path.absolute()).replace('\\', '/')}", layer = "OUTLINE");
+        import("{dxf_import_path}", layer = "OUTLINE");
     }}
 }}
 

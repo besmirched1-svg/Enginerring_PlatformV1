@@ -81,6 +81,66 @@ class FrameAnalyzer:
         self.geometry = geometry
         logger.debug(f"Initialized FrameAnalyzer with material and geometry")
 
+    def calculate_temperature_adjusted_properties(self, temperature_change: float) -> Dict[str, float]:
+        """
+        Calculate temperature-adjusted geometric and material properties for frame member.
+
+        Args:
+            temperature_change: Temperature change from reference in C
+
+        Returns:
+            Dictionary of adjusted properties: length, cross_section_area,
+            moment_of_inertia, polar_moment_of_inertia, section_modulus,
+            radius_of_gyration, youngs_modulus, shear_modulus, density
+        """
+        if abs(temperature_change) < 0.5:
+            return {
+                "length": self.geometry.length,
+                "cross_section_area": self.geometry.cross_section_area,
+                "moment_of_inertia": self.geometry.moment_of_inertia,
+                "polar_moment_of_inertia": self.geometry.polar_moment_of_inertia,
+                "section_modulus": self.geometry.section_modulus,
+                "radius_of_gyration": self.geometry.radius_of_gyration,
+                "youngs_modulus": self.material.youngs_modulus,
+                "shear_modulus": self.material.shear_modulus,
+                "density": self.material.density,
+            }
+
+        thermal_strain = self.geometry.thermal_expansion * temperature_change
+
+        adjusted_length = self.geometry.length * (1.0 + thermal_strain)
+        adjusted_area = self.geometry.cross_section_area * (1.0 + thermal_strain) ** 2
+        adjusted_inertia = self.geometry.moment_of_inertia * (1.0 + thermal_strain) ** 4
+        adjusted_polar = self.geometry.polar_moment_of_inertia * (1.0 + thermal_strain) ** 4
+        adjusted_section = self.geometry.section_modulus * (1.0 + thermal_strain) ** 3
+        adjusted_radius = self.geometry.radius_of_gyration * (1.0 + thermal_strain)
+
+        temp_coefficient_modulus = -0.001
+        modulus_factor = 1.0 + temp_coefficient_modulus * temperature_change
+        adjusted_youngs = max(self.material.youngs_modulus * modulus_factor, 0.0)
+        adjusted_shear = max(self.material.shear_modulus * modulus_factor, 0.0)
+
+        volume_factor = (1.0 + thermal_strain) ** 3
+        adjusted_density = self.material.density / volume_factor if volume_factor > 0 else 0.0
+
+        logger.info(
+            f"Temperature-adjusted frame properties (dT={temperature_change:+.1f}C): "
+            f"length={adjusted_length:.3f}mm, area={adjusted_area:.3f}mm2, "
+            f"I={adjusted_inertia:.3f}mm4, E={adjusted_youngs:.0f}MPa"
+        )
+
+        return {
+            "length": adjusted_length,
+            "cross_section_area": adjusted_area,
+            "moment_of_inertia": adjusted_inertia,
+            "polar_moment_of_inertia": adjusted_polar,
+            "section_modulus": adjusted_section,
+            "radius_of_gyration": adjusted_radius,
+            "youngs_modulus": adjusted_youngs,
+            "shear_modulus": adjusted_shear,
+            "density": adjusted_density,
+        }
+
     def calculate_thermal_stress(self, temperature_change: float) -> float:
         """
         Calculate thermal stress due to temperature change.

@@ -60,6 +60,52 @@ class ShaftAnalyzer:
         self.geometry = geometry
         logger.debug(f"Initialized ShaftAnalyzer with geometry: {geometry}")
 
+    def calculate_temperature_adjusted_properties(self, temperature_change: float) -> Dict[str, float]:
+        """
+        Calculate temperature-adjusted material and geometric properties for shaft.
+
+        Args:
+            temperature_change: Temperature change from reference in C
+
+        Returns:
+            Dictionary of adjusted properties: diameter, length, youngs_modulus,
+            shear_modulus, density
+        """
+        if abs(temperature_change) < 0.5:
+            return {
+                "diameter": self.geometry.diameter,
+                "length": self.geometry.length,
+                "youngs_modulus": self.geometry.youngs_modulus,
+                "shear_modulus": self.geometry.shear_modulus,
+                "density": self.geometry.density,
+            }
+
+        thermal_strain = self.geometry.thermal_expansion * temperature_change
+        adjusted_diameter = self.geometry.diameter * (1.0 + thermal_strain)
+        adjusted_length = self.geometry.length * (1.0 + thermal_strain)
+
+        temp_coefficient_modulus = -0.001
+        modulus_factor = 1.0 + temp_coefficient_modulus * temperature_change
+        adjusted_youngs = max(self.geometry.youngs_modulus * modulus_factor, 0.0)
+        adjusted_shear = max(self.geometry.shear_modulus * modulus_factor, 0.0)
+
+        volume_factor = (1.0 + thermal_strain) ** 3
+        adjusted_density = self.geometry.density / volume_factor if volume_factor > 0 else 0.0
+
+        logger.info(
+            f"Temperature-adjusted shaft properties (dT={temperature_change:+.1f}C): "
+            f"diam={adjusted_diameter:.3f}mm, length={adjusted_length:.3f}mm, "
+            f"E={adjusted_youngs:.0f}MPa, G={adjusted_shear:.0f}MPa"
+        )
+
+        return {
+            "diameter": adjusted_diameter,
+            "length": adjusted_length,
+            "youngs_modulus": adjusted_youngs,
+            "shear_modulus": adjusted_shear,
+            "density": adjusted_density,
+        }
+
     def calculate_torsional_stress(self, torque: float) -> float:
         """
         Calculate maximum torsional shear stress in a circular shaft.

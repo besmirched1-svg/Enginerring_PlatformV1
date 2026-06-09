@@ -4,7 +4,7 @@ import time
 import threading
 import shutil
 import logging
-from typing import Any
+from typing import Any, Optional
 from app.core.events import EVENTS_CHANNEL
 from app.core.mutation import propose_next_config
 from app.core.improvement_chain import ImprovementChainManager, MAX_ATTEMPTS
@@ -165,3 +165,27 @@ class ImprovementLoopController:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
             logger.info("Autonomous improvement loop daemon stopped.")
+
+    def run_improvement_cycle(self, config: dict, metrics: dict) -> Optional[dict]:
+        """Run a single improvement cycle triggered by telemetry feedback.
+
+        Args:
+            config: Machine configuration or trigger dict with at least machine_id.
+            metrics: Performance metrics / deviation data.
+
+        Returns:
+            Proposed next configuration dict, or None on failure.
+        """
+        machine_name = config.get("machine_id") or metrics.get("machine_id", "unknown")
+        chain_id = f"feedback_{uuid.uuid4().hex[:8]}"
+        try:
+            self.chain_manager.init_chain(chain_id, machine_name, "v0")
+        except Exception:
+            logger.debug("Chain manager init skipped (Redis may be unavailable)")
+        try:
+            next_config = propose_next_config(dict(config), dict(metrics))
+            logger.info("Improvement cycle for %s: proposed new config", machine_name)
+            return next_config
+        except Exception as exc:
+            logger.warning("Improvement cycle failed for %s: %s", machine_name, exc)
+            return None

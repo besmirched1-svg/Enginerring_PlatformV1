@@ -28,8 +28,7 @@ def _extract_pdf_text(file_path: Path) -> Tuple[str, float]:
                 t = page.extract_text()
                 if t:
                     text_parts.append(t)
-        text = "
-".join(text_parts)
+        text = "\n".join(text_parts)
         if text.strip():
             confidence = min(1.0, 0.6 + 0.4 * min(1.0, len(text) / 500))
             logger.debug("pdfplumber extracted %d chars (confidence=%.2f)", len(text), confidence)
@@ -68,8 +67,7 @@ def _extract_ocr_text(file_path: Path) -> Tuple[str, float]:
             if confs:
                 confidences.append(sum(confs) / len(confs) / 100.0)
 
-        text = "
-".join(text_parts)
+        text = "\n".join(text_parts)
         confidence = sum(confidences) / len(confidences) if confidences else 0.0
         logger.debug("pytesseract extracted %d chars (confidence=%.2f)", len(text), confidence)
         return text, confidence

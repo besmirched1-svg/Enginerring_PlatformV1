@@ -11,7 +11,13 @@ logger = logging.getLogger("engine.telemetry.feedback")
 class FeedbackTrigger:
     """Generates improvement triggers based on detected deviations."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        improvement_controller: Any = None,
+        knowledge_store: Any = None,
+    ) -> None:
+        self.improvement_controller = improvement_controller
+        self.knowledge_store = knowledge_store
         self.triggers: List[Dict[str, Any]] = []
 
     def evaluate(self, deviations: List[Deviation]) -> List[Dict[str, Any]]:
@@ -29,6 +35,24 @@ class FeedbackTrigger:
         self.triggers.extend(new_triggers)
         if new_triggers:
             logger.info("Generated %d improvement trigger(s)", len(new_triggers))
+            if self.knowledge_store is not None:
+                for t in new_triggers:
+                    self.knowledge_store._append({
+                        "record_type": "telemetry_feedback",
+                        "machine_name": t["machine_id"],
+                        "component": t["component"],
+                        "metric": t["metric"],
+                        "priority": t["priority"],
+                        "severity": t["severity"],
+                        "deviation_pct": t["deviation_pct"],
+                        "description": t["description"],
+                    })
+            if self.improvement_controller is not None:
+                for t in new_triggers:
+                    try:
+                        self.improvement_controller.run_improvement_cycle(t, t)
+                    except Exception as exc:
+                        logger.warning("Improvement controller call failed: %s", exc)
         return new_triggers
 
     def get_all(self) -> List[Dict[str, Any]]:
@@ -50,8 +74,14 @@ class FeedbackTrigger:
         }
 
 
-def create_trigger() -> FeedbackTrigger:
-    return FeedbackTrigger()
+def create_trigger(
+    improvement_controller: Any = None,
+    knowledge_store: Any = None,
+) -> FeedbackTrigger:
+    return FeedbackTrigger(
+        improvement_controller=improvement_controller,
+        knowledge_store=knowledge_store,
+    )
 
 
 if __name__ == "__main__":
