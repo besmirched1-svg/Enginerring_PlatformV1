@@ -71,6 +71,7 @@ class EngineeringOrchestrator:
         chain_id: Optional[str] = None,
         attempt_in_chain: int = 0,
         ingestion_path: Optional[Dict[str, Any]] = None,
+        auto_promote: bool = True,
     ) -> Dict[str, Any]:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
         logger.info("Running build pipeline for %s [%s]", machine_name, revision_id)
@@ -269,10 +270,29 @@ class EngineeringOrchestrator:
             })
 
         score = evaluation_result.get("composite", 0.0)
-        is_promoted, reason = should_promote(score, old_score)
+
+        # promotion_mode is the *reason* the promotion block ended in
+        # its current state. The four values are mutually exclusive
+        # and exhaustive for the (auto_promote, old_rev, is_promoted)
+        # tuple. They are returned alongside ``promoted`` so callers
+        # (notably the Phase 17.2a drawing-ingest route) can
+        # distinguish "skipped by policy" from "would have promoted
+        # but the score wasn't good enough".
+        if not auto_promote:
+            promotion_mode = "disabled"
+            is_promoted = False
+        elif old_rev == "v0":
+            promotion_mode = "no_prior_champion"
+            is_promoted = False
+        else:
+            is_promoted, reason = should_promote(score, old_score)
+            promotion_mode = (
+                "below_threshold" if not is_promoted else "attempted"
+            )
+
         promotion_triggered = False
 
-        if is_promoted:
+        if auto_promote and old_rev != "v0" and is_promoted:
             if set_new_champion(machine_name, revision_id, score):
                 try:
                     update_promotion_status(machine_name, revision_id, "champion")
@@ -299,6 +319,7 @@ class EngineeringOrchestrator:
             "score": score,
             "evaluation": evaluation_result,
             "promoted": promotion_triggered,
+            "promotion_mode": promotion_mode,
             "parent_info": parent_info,
         }
 
