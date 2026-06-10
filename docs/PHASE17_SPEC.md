@@ -15,6 +15,22 @@ change.
 - 2026-06-10: §5.1 pinned the 6 drawings and their
   expected graph nodes; §12 added to formalize the
   validation pack as the regression suite.
+- 2026-06-10: §2.1 file-type set expanded from 6 to 8.
+  Added `.svg` (was "not in v1 scope") and `.bmp`
+  (was "accepted by route, not tested"). Both are now
+  in `app/vision/constants.py` SUPPORTED_FILE_TYPES,
+  used by the route and OCR engine as a single source
+  of truth. Tests/test_supported_file_types.py pins
+  the set. The spec previously documented per-module
+  drift between `routes.py:198` (no `.bmp`) and
+  `ocr_engine.py:102` (had `.bmp`); that drift is
+  resolved by routing both modules through the
+  registry. This is a clarification of §2.1, not a
+  capability expansion: the route already accepted
+  `.bmp` files in practice (the OCR engine would
+  process them), the spec just documented it as
+  "not tested." The new registry codifies that
+  behavior and makes it testable.
 
 **Scope:** end-to-end ingestion of engineering drawings into
 the v1.0.x platform, producing a complete machine revision
@@ -64,16 +80,24 @@ and (c) harden the existing pipeline for production use.
 
 ### 2.1 File types
 
+The frozen Phase 17 v1 input set is **8 extensions**,
+defined as `app/vision/constants.py` `SUPPORTED_FILE_TYPES`
+and pinned by `tests/test_supported_file_types.py`. The
+route (`app/api/routes.py`) and the OCR engine
+(`app/vision/ocr_engine.py`) both import this constant;
+no module is allowed to maintain its own list.
+
 | Extension | MIME | Status | Notes |
 |-----------|------|:------:|-------|
 | `.pdf` | `application/pdf` | supported | pdfplumber for embedded text; pytesseract OCR fallback for scanned |
 | `.png` | `image/png` | supported | OCR via pytesseract |
 | `.jpg`, `.jpeg` | `image/jpeg` | supported | OCR via pytesseract |
-| `.tiff`, `.tif` | `image/tiff` | supported | OCR via pytesseract |
-| `.bmp` | `image/bmp` | accepted by route, **not tested** | listed in `ocr_engine.py:102` but no test coverage |
+| `.tif`, `.tiff` | `image/tiff` | supported | OCR via pytesseract |
+| `.svg` | `image/svg+xml` | supported | OCR via pytesseract (rasterised on the fly) |
+| `.bmp` | `image/bmp` | supported | OCR via pytesseract |
 | `.dxf` | `image/vnd.dxf` | not in v1 scope | routed via `app/importers/dxf_importer.py` (separate concern) |
-| `.svg` | `image/svg+xml` | not in v1 scope | — |
 | `.docx`, `.xlsx` | various | not in v1 scope | — |
+| `.webp`, `.heic`, `.dwg`, `.zip` | various | **explicitly not in v1 scope** | out of spec; would require a §10 amendment to add |
 
 **Maximum file size:** **20 MB** per upload. Larger files
 are rejected with HTTP 413. Reason: pdf2image rasterization

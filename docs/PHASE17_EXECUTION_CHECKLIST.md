@@ -182,18 +182,96 @@ does not accidentally start trying to fix them.
 10. **Hand-drawn sketches have low OCR accuracy.**
     pytesseract handwriting model is 30-60% typical.
     Mitigated by review-before-commit (17.3).
-11. **`.bmp` accepted by `ocr_engine.py:102` but
-    untested.** Listed in the suffixes but no test
-    coverage. 17.1 removes this ambiguity.
+11. **`.bmp` listed in `ocr_engine.py:102` but not in
+    `routes.py:198`.** Per-module drift: the route
+    rejected `.bmp` with HTTP 415 even though the OCR
+    engine would have processed it. Spec §2.1 documented
+    this as "accepted by route, not tested" — the
+    wording was inconsistent with the code. **Resolved
+    in 17.1 file-type hardening:** `app/vision/constants.py`
+    `SUPPORTED_FILE_TYPES` is now the single source of
+    truth; both modules import it. `.bmp` and `.svg`
+    are both fully supported and tested. See §0.7 below
+    for the resolution evidence.
 12. **No max-file-size enforcement.** The existing
     route accepts arbitrarily large uploads and writes
     them to a tempfile. 17.1 adds the 20 MB cap.
 13. **No `confidence` floor enforcement.** The existing
     route returns the result regardless of confidence.
     17.1 adds the 0.30 floor.
-14. **No file-type constant.** File types are listed
+14. **No file-type constant.** File types were listed
     inline in `routes.py:198` as a `set` literal. 17.1
-    pins them in a module-level constant.
+    replaces this with `app/vision/constants.py`
+    `SUPPORTED_FILE_TYPES`, imported by both the route
+    and the OCR engine. **Resolved in 17.1 file-type
+    hardening.** See §0.7 below for the resolution
+    evidence.
+
+### 0.7 17.1 file-type hardening — resolution evidence
+
+The two file-type drift items (11 and 14) are resolved
+in 17.1. The audit is dated to commit `96e4696` (the
+spec freeze); the resolution is recorded here for
+traceability between the spec, the code, and the
+checklist.
+
+**Resolution artifacts:**
+
+- `app/vision/constants.py` — single source of truth,
+  8-extension `frozenset`, with a future-proofing
+  comment naming the spec amendment procedure as the
+  required path to add new types.
+- `app/api/routes.py:198` — now imports
+  `SUPPORTED_FILE_TYPES`; the inline `set` literal is
+  removed.
+- `app/vision/ocr_engine.py:102` — now imports
+  `SUPPORTED_FILE_TYPES`; the inline `set` literal is
+  removed. The PDF-vs-image branch is governed by the
+  same registry.
+- `tests/test_supported_file_types.py` — 12 tests
+  pinning the registry against the spec's frozen
+  extension list. New developers cannot silently add
+  or remove an extension.
+- `docs/PHASE17_SPEC.md §2.1` — the table now lists
+  8 supported extensions and an explicit
+  "out-of-scope" row for `.webp`, `.heic`, `.dwg`,
+  `.zip`. The spec's changelog at the top of the file
+  records this amendment.
+
+**Verification commands** (per the maintainer's
+acceptance criteria):
+
+- `git grep -i "pdf|png|jpg|jpeg|tif|tiff|svg|bmp"`
+  shows no conflicting extension lists (the only
+  remaining mentions are in the spec, the registry,
+  the tests, and the doc references — all in
+  agreement).
+- `pytest` passes (944 passed, 1 skipped, 0 failed at
+  the 17.1 hardening commit).
+- `POST /api/drawing/ingest` accepts all 8 formats
+  and rejects any other with HTTP 415.
+
+**Audit counts after 17.1:**
+
+| Module | Before 17.1 | After 17.1 | Delta |
+|--------|------------:|-----------:|------:|
+| `app/vision/` total | 870 | 916 | +46 |
+| `app/vision/constants.py` | (did not exist) | 42 | +42 (new) |
+| `app/vision/ocr_engine.py` | 106 | 110 | +4 |
+| Other `app/vision/` files | 764 | 764 | 0 |
+| `tests/test_vision.py` | 188 | 188 | 0 |
+| `tests/test_supported_file_types.py` | (did not exist) | 90 | +90 (new) |
+| Drawing routes | 1 | 1 | 0 |
+| Vision tests | 26 | 26 | 0 |
+| Registry tests | 0 | 12 (new) | +12 |
+| Total tests in suite | 932 | 944 | +12 |
+
+The +46 lines in `app/vision/` are the new
+`constants.py` (42 lines) and a 4-line refactor in
+`ocr_engine.py` to route the file-type decision
+through the registry. The 26 existing vision tests
+still pass; the 906 other tests in the suite are
+unaffected.
 
 ---
 

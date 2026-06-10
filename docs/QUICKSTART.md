@@ -227,6 +227,13 @@ The whole pipeline ran in **~1.2 seconds** end-to-end.
   the multi-generation optimizer.
 - **Read the operator's guide** if you're going to deploy
   this: [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+- **Ingest an engineering drawing.** On the
+  `phase17-drawing-ingestion` branch,
+  `POST /api/drawing/ingest` accepts 8 file types
+  (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`,
+  `.svg`, `.bmp`). See
+  [PHASE17_SPEC.md §2.1](PHASE17_SPEC.md#21-file-types)
+  for the frozen input set and §5 for success criteria.
 - **Something went wrong?** [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
   maps symptoms to fixes.
 
