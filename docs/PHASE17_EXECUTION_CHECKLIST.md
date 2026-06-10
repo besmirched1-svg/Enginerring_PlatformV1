@@ -544,28 +544,234 @@ proposes adding them, the answer is "no, that is 17.2+":
 
 ## 3. 17.2 — End-to-End Build (opt-in, off by default)
 
-Per spec §7.2. **Not started.** Placeholder for the
-next sub-phase after 17.1.
+Per spec §7.2. **Status as of commit `be1a72a` (Phase 17.2a
+head, 5 commits ahead of `phase17-spec-frozen`):**
+**COMPLETE.** The 17.2a sprint is an integration milestone:
+it wires the existing drawing-ingest pipeline (17.1)
+through the existing orchestrator so that an uploaded
+drawing can optionally flow all the way to a revision.
+The review-before-commit flow (17.3) is the default and
+remains out of scope for 17.2a.
 
-### 17.2 Checklist (to be activated when 17.1 lands)
+### 17.2a Checklist
 
-- [ ] `POST /api/drawing/ingest-and-build` route added.
-- [ ] The route calls the existing
+- [x] `POST /api/drawing/ingest-and-build` route added
+      in `app/api/routes.py`. Bumps the Method A route
+      count (count of `@router.get` / `@router.post` /
+      `@router.put` / `@router.delete` decorators in
+      `app/api/routes.py`) from 55 to 56. Pinned by
+      `test_method_a_route_count_is_56`.
+- [x] The route calls the existing
       `app/core/orchestrator.py` (per spec §4 — never
-      write artifacts directly).
-- [ ] `commit=true` query parameter gates the
-      orchestrator call. Default is `commit=false`.
-- [ ] Global configuration flag in
-      `app/core/config.py` allows enabling the route
-      platform-wide. Default is off.
-- [ ] The route is **never** a silent default.
-- [ ] The 6-artifact chain in the produced revision
+      write artifacts directly). The orchestrator is
+      reached via `_get_orchestrator()` and
+      `run_machine_job(...)` exactly the same way the
+      existing `/api/improve/register` route does.
+- [x] `commit=true` query parameter gates the
+      orchestrator call. Default is `commit=false`. The
+      route short-circuits at Gate 1 when `commit` is
+      not set, returning 200 with the IngestionResult
+      and a `commit_skipped` reason.
+- [x] Global configuration flag is the env-var
+      `DRAWING_AUTO_BUILD_ENABLED` (read inline per
+      `DEVELOPER_GUIDE.md` §5.4; **no config module**).
+      Default is off. Accepted truthy values are `"1"`,
+      `"true"`, `"yes"` (case-insensitive). The route
+      short-circuits at Gate 2 when the env var is not
+      set, returning 200 with a `commit_skipped` reason
+      that names the env-var gate. The spec requires
+      "a configuration flag" — the env-var is the
+      §5.4-compliant implementation.
+- [x] Confidence floor (0.30) is Gate 3. Below the
+      floor, even when both opt-ins are set, the route
+      returns 200 with `status="rejected"` and a
+      `commit_skipped` reason citing spec §7.3. The
+      operator still receives the IngestionResult so
+      the 17.3 review-then-commit flow remains
+      available. Pinned by `TestConfidenceFloor`.
+- [x] The route is **never** a silent default. Three
+      independent gates (`commit`, env-var, confidence)
+      must all pass; the default behaviour is to return
+      the IngestionResult without calling the
+      orchestrator. Pinned by `TestOptInGates` and
+      `TestSharedValidation`.
+- [x] The 6-artifact chain in the produced revision
       matches the manual `/api/improve/register` chain
-      byte-for-byte (per spec §4 side-effect
-      equivalence).
-- [ ] The `manifest.json` gets an `ingestion_path`
+      (per spec §4 side-effect equivalence). The route
+      is a thin wrapper — it calls the orchestrator,
+      it does not write artifacts. The artifact chain
+      is the orchestrator's, by construction. Pinned by
+      `TestFullArtifactChain` in `test_orchestrator.py`
+      and by the orchestrator's own test suite
+      (unchanged through 17.2a).
+- [x] The `manifest.json` gets an `ingestion_path`
       field with `{source_file, ocr_confidence,
-      graph_hash}`.
+      graph_hash}`. The graph hash is
+      `"sha256:" + sha256(json.dumps(graph.to_dict(),
+      sort_keys=True, default=str))`. Additive only:
+      the pre-17.2a manifest bytes are byte-equivalent
+      to a captured reference (pinned by
+      `test_no_ingestion_path_byte_equivalence` in
+      `test_revisions_ingestion_path.py`).
+
+### 17.2a — Governance
+
+**Statement (recorded here per the maintainer's locked
+design):**
+
+> Drawing-ingested builds may create and evaluate
+> revisions but must not alter champion lineage. Champion
+> promotion remains an explicit engineering lifecycle
+> action.
+
+**Enforcement layers (three independent test classes pin
+the contract):**
+
+1. **Route layer** — the new
+   `POST /api/drawing/ingest-and-build` route passes
+   `auto_promote=False` to the orchestrator. Pinned by
+   `TestOrchestratorCall::test_orchestrator_called_with_auto_promote_false`
+   and the four-confidence sweep in
+   `TestGovernanceStatement::test_route_always_passes_auto_promote_false`.
+2. **Orchestrator layer** — `run_machine_job` is gated
+   on `if auto_promote and old_rev != "v0" and
+   is_promoted:`. When `auto_promote=False`, the entire
+   promotion block is skipped
+   (`set_new_champion`, `update_promotion_status`,
+   `log_design_evolution`, `dispatch_cluster_alert`,
+   the `revision_promoted` event). Pinned by
+   `TestRunMachineJobAutoPromote::test_auto_promote_false_does_not_call_set_new_champion`.
+3. **Side-effect layer** — `set_new_champion` is mocked
+   at the route level and asserted never to be called.
+   Pinned by
+   `TestOrchestratorCall::test_orchestrator_never_calls_set_new_champion`.
+
+**Response field:** the orchestrator's return now
+includes a `promotion_mode` field alongside the existing
+`promoted` boolean. With `auto_promote=False` the value
+is always `"disabled"`. Pinned by
+`TestOrchestratorCall::test_response_carries_promotion_mode_disabled`
+and the four-value pinning in
+`TestRunMachineJobPromotionModeValues`.
+
+### 17.2a — Method A route counting
+
+The "route count" claim in spec §0.2 and the project
+documents uses **Method A**: the number of `@router.get`,
+`@router.post`, `@router.put`, `@router.delete`
+decorators in `app/api/routes.py`. This is the count
+of *decorated route handlers in the API surface
+module*, not the count of paths registered with
+FastAPI (which includes mount routes, websocket
+routes, and the `GET /health` style platform routes).
+
+A regression test
+(`tests/test_drawing_ingest_and_build_routes.py::TestRouteRegistered::test_method_a_route_count_is_56`)
+pins the count. **Adding a new route increments the
+count and the test must be updated in the same
+commit.** A future refactor that splits the routes
+into multiple modules will need a new "Method B"
+that pins that convention; the Method A test
+continues to pin the single-module count for as long
+as the file structure holds.
+
+### 17.2a — Audit counts (mirroring 17.1 §0.8)
+
+**Code changes (17.2a, five code commits + one docs):**
+
+| File | Lines (17.1) | Lines (17.2a) | Delta | Role |
+|------|------:|------:|------:|------|
+| `app/vision/constants.py` | 70 | 70 | 0 | unchanged |
+| `app/vision/upload_validation.py` | (did not exist) | 179 | +179 (new) | shared validate-and-stage helper (Commit 2) |
+| `app/vision/orchestrator_adapter.py` | (did not exist) | 166 | +166 (new) | MachineGraph → config adapter (Commit 3a) |
+| `app/core/orchestrator.py` | 309 | 338 | +29 | `auto_promote` kwarg + `promotion_mode` field (Commit 3a.5) |
+| `app/core/revisions.py` | 78 | 97 | +19 | additive `ingestion_path` kwarg + docstring (Commit 1) |
+| `app/api/routes.py` (drawing routes only) | 47 | 285 | +238 | + `/drawing/ingest-and-build` (Commit 3b) |
+| `app/vision/` total | 944 | 1289 | +345 | |
+
+**Test changes:**
+
+| File | Tests (17.1) | Tests (17.2a) | Delta | Role |
+|------|------:|------:|------:|------|
+| `tests/test_vision.py` | 26 | 26 | 0 | unchanged |
+| `tests/test_supported_file_types.py` | 12 | 12 | 0 | unchanged |
+| `tests/test_size_enforcement.py` | 5 | 5 | 0 | unchanged |
+| `tests/test_confidence_floor.py` | 8 | 8 | 0 | unchanged |
+| `tests/test_drawing_ingest_e2e.py` | 8 | 8 | 0 | unchanged |
+| `tests/test_drawing_ingest_routes.py` | 19 | 19 | 0 | unchanged |
+| `tests/test_orchestrator_adapter.py` | (did not exist) | 18 | +18 | MachineGraph → config adapter (3a) |
+| `tests/test_revisions_ingestion_path.py` | (did not exist) | 16 | +16 | ingestion_path + auto_promote (1 + 3a.5) |
+| `tests/test_drawing_ingest_and_build_routes.py` | (did not exist) | 21 | +21 | 12-criterion integration (3b) |
+| **Total drawing-related tests** | **78** | **133** | **+55** | |
+| **Total in suite** | **984** | **1039** | **+55** | |
+
+**Suite-wide count progression (from §0.8 carried forward):**
+
+- Before 17.1 (commit `a801cc2`, audit baseline):
+  932 passed, 1 skipped, 0 failed.
+- After 17.1g: 984 passed, 1 skipped, 0 failed.
+- After 17.2a (5 code commits): 1039 passed,
+  1 skipped, 0 failed.
+
+**Tag state at 17.2a complete:**
+
+- `phase17-spec-frozen` → `96e4696` (FROZEN, unchanged).
+- `pre-phase17-backup` → `916a402` (alias of v1.0.1,
+  unchanged).
+- `phase17-1-hardening` — not yet tagged (maintainer
+  instruction required; the recommended commit is
+  `6e8197b`).
+- `phase17-2a-integration` — not yet tagged. The
+  recommended commit is `be1a72a` (the route commit,
+  3b/4). The 4/4 docs commit is a candidate too.
+
+### 17.2a — Not in scope (and the reason)
+
+- **AI / OCR / vision model upgrades.** Spec §6, §10.
+- **New file types** beyond the 8 in the registry.
+  Spec §2.1, §10.
+- **Review-before-commit endpoints.** That is 17.3.
+  17.2a is the auto-build; 17.3 is the review flow.
+- **Hemp decorticator validation pack.** That is 17.4.
+- **Operator / developer documentation.** That is 17.5.
+- **Production hardening** (audit log, rate limit,
+  security review). That is 17.6.
+- **Post-ingest graph editing** (operator modifies the
+  graph before commit). That is 17.3.
+- **Material spec merging from BOM rows into subsystem
+  configs.** The adapter's `bom_rows` parameter is
+  reserved for 17.3; 17.2a does not consume it. Pinned
+  by `TestBomRowsParameter::test_bom_rows_is_accepted_but_unused`.
+
+### 17.2a — Acceptance gate
+
+17.2a is complete when:
+
+1. All 7 checklist items above are checked. **DONE**
+2. The 12 design acceptance criteria are pinned by
+   `tests/test_drawing_ingest_and_build_routes.py` —
+   21 tests across 7 classes. **DONE**
+3. `python -m pytest tests/ -q` is green. Target:
+   1039 passed, 1 skipped, 0 failed. **DONE**
+4. The pre-17.2a manifest bytes are still
+   byte-equivalent when `ingestion_path` is not passed.
+   Pinned by
+   `test_no_ingestion_path_byte_equivalence`. **DONE**
+5. The orchestrator's default behaviour is unchanged
+   when no new kwargs are passed. Pinned by
+   `test_run_machine_job_preserves_full_artifact_chain`
+   and
+   `test_auto_promote_true_default_preserves_existing_behavior`. **DONE**
+6. The governance statement is recorded (this section)
+   and enforced at three layers (route, orchestrator,
+   side-effect). **DONE**
+7. `docs/PHASE17_SPEC.md` is **untouched**. The spec
+   is FROZEN; no 17.2a change amended it. **DONE**
+8. A short release note is filed at
+   `docs/releases/PHASE17_2A_RELEASE_NOTES.md`
+   listing the 5 code commits + 1 docs commit and the
+   test counts. **TODO** (filed by the maintainer
+   along with the `phase17-2a-integration` tag)
 
 ---
 

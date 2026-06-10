@@ -10,6 +10,129 @@ same scheme (e.g. ``v1.0.0-rc1``).
 
 ---
 
+## [Unreleased] — Phase 17.2a — "Drawing Ingest → Build Integration"
+
+Phase 17.2a is an **integration milestone**, not a capability
+milestone. It wires the drawing-ingest pipeline (17.1) through
+the existing orchestrator so that an uploaded drawing can
+optionally flow all the way to a revision. **Auto-build is
+opt-in and off by default** per spec §7.2 / §7.3. The
+review-before-commit flow (17.3) is the default.
+
+### Added
+
+- **`POST /api/drawing/ingest-and-build`** — new opt-in
+  endpoint that closes the loop from drawing upload to
+  revision creation in a single POST. Three independent
+  gates must all be satisfied before the orchestrator is
+  called: ``commit=true`` query param, the
+  ``DRAWING_AUTO_BUILD_ENABLED`` environment variable set to
+  ``1``, and ``confidence >= CONFIDENCE_FLOOR`` (0.30). If
+  any gate fails the route returns 200 with the full
+  IngestionResult and a ``commit_skipped`` field naming the
+  blocked gate. When all three pass, the route calls
+  ``orchestrator.run_machine_job`` with ``auto_promote=False``
+  and the new ``ingestion_path`` manifest extension. The
+  default review flow (``/api/drawing/ingest``) is unchanged.
+- **MachineGraph → orchestrator config adapter**
+  (``app/vision/orchestrator_adapter.py``) — the single
+  source of truth for translating a ``MachineGraph`` into
+  the orchestrator's config dict shape. Pure function, no
+  I/O, 18 unit tests pinning the subsystem key closure.
+- **Shared upload-validation helper**
+  (``app/vision/upload_validation.py``) — extracted from
+  the inline route code in 17.1. Extension check,
+  Content-Length pre-check, and 64 KB streaming backstop
+  live in one place; both ``/api/drawing/ingest`` and the
+  new ``/api/drawing/ingest-and-build`` call it. Behavior
+  is byte-for-byte equivalent to the pre-17.2a inline code.
+- **Manifest ``ingestion_path`` extension** — the produced
+  revision's ``manifest.json`` gains a top-level
+  ``ingestion_path`` field when a drawing is committed,
+  recording ``{source_file, ocr_confidence, graph_hash}``.
+  The graph hash is computed from the canonical
+  ``to_dict()`` form so the hash is stable across
+  equivalent graphs and unique across distinct ones.
+  Additive only: when the kwarg is absent the manifest
+  bytes are byte-identical to the pre-17.2a output
+  (pinned by a regression test against a captured
+  reference).
+
+### Changed
+
+- **Orchestrator return shape** — ``run_machine_job`` now
+  always returns a ``promotion_mode`` field alongside the
+  existing ``promoted`` boolean. The four possible values
+  are ``disabled`` (auto_promote was False),
+  ``no_prior_champion`` (fresh machine, ``v0``),
+  ``below_threshold`` (score did not clear), and
+  ``attempted`` (``set_new_champion`` ran). The route layer
+  can distinguish "skipped by policy" from "would have
+  promoted but the score was not good enough".
+- **Orchestrator governance** — ``run_machine_job`` now
+  accepts an ``auto_promote: bool = True`` kwarg. When
+  ``False``, the entire promotion block (``set_new_champion``,
+  ``update_promotion_status``, ``log_design_evolution``,
+  ``dispatch_cluster_alert``, the ``revision_promoted``
+  event) is skipped. The default (``True``) preserves the
+  pre-17.2a behavior exactly; the 17.2a auto-build route
+  passes ``False``.
+
+### Governance
+
+The 17.2a auto-build route is **constitutionally incapable
+of promoting a champion** (per the maintainer's locked
+design). The governance statement is recorded in
+``docs/PHASE17_EXECUTION_CHECKLIST.md`` §3:
+
+> Drawing-ingested builds may create and evaluate
+> revisions but must not alter champion lineage. Champion
+> promotion remains an explicit engineering lifecycle
+> action.
+
+This is enforced at three layers: (1) the route passes
+``auto_promote=False`` to the orchestrator; (2) the
+orchestrator's promotion block is gated on
+``auto_promote and old_rev != "v0" and is_promoted``; (3)
+the route's integration test suite pins
+``set_new_champion`` as never called.
+
+### Fixed
+
+None. 17.2a is purely additive; no existing route, model,
+schema, or behavior was changed.
+
+### Tests
+
+- **1039 tests passing**, 1 skipped (pre-existing), 0
+  failures at the 17.2a head.
+- 7 new tests in ``test_revisions_ingestion_path.py``
+  (Commit 1, archive_revision additive extension).
+- 18 new tests in ``test_orchestrator_adapter.py``
+  (Commit 3a, MachineGraph → config adapter).
+- 6 new tests in ``test_revisions_ingestion_path.py``
+  (Commit 3a.5, auto_promote governance).
+- 21 new tests in
+  ``test_drawing_ingest_and_build_routes.py`` (Commit 3b,
+  integration acceptance for the 12 design criteria).
+- Net: **+55 tests** over the 17.1g baseline of 984.
+- The 17.1 baseline (944) and pre-17.1 (916) test counts
+  remain green throughout.
+
+### Documentation
+
+- ``CHANGELOG.md`` — this entry.
+- ``CURRENT_STATE_AND_ROADMAP.md`` — Phase 17 status added.
+- ``docs/ARCHITECTURE.md`` — ``app/vision/`` row added
+  to the per-directory responsibility table.
+- ``docs/PHASE17_EXECUTION_CHECKLIST.md`` — §3 17.2
+  checklist flipped, governance statement added, Method A
+  route counting documented, 17.2 audit-counts table
+  added.
+- ``docs/PHASE17_SPEC.md`` — **untouched** (FROZEN).
+
+---
+
 ## [1.0.0-rc1] — 2026-06-10 — "Industrial Foundation"
 
 The first release candidate. Behavior is frozen: bug-fix only, no

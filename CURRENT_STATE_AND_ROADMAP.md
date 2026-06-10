@@ -1,8 +1,8 @@
 # OpenSCAD Autonomous Engineering Platform - State & Roadmap
 
-**Last Updated**: June 9, 2026  
-**Status**: Phase 7 Hardware Feedback Loop Complete — Telemetry → Digital Twin → Knowledge → Improvement  
-**Version**: v1.4.0 (Alpha)
+**Last Updated**: June 11, 2026
+**Status**: Phase 17.2a complete — drawing ingest → build integration (opt-in, off by default)
+**Version**: v1.4.0 (Alpha) + 17.2a pending release
 
 > **Architecture map** — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current dependency graph, layer rules, and the `manufacturing` ↔ `production` contract.
 
@@ -453,6 +453,83 @@
 
 ---
 
+## Phase 17: Engineering Drawing Ingestion ✅ 17.1 + 17.2a COMPLETE
+
+**Goal**: Ingest engineering drawings (PDF/image), extract a
+MachineGraph, and (optionally) build a revision. The
+review-before-commit flow (17.3) is the default; auto-build
+(17.2) is opt-in.
+
+**Status as of June 11, 2026:**
+**17.1 + 17.2a COMPLETE.** 17.3 (review/commit endpoints),
+17.4 (hemp decorticator validation pack), 17.5 (operator
+docs), 17.6 (production hardening) are queued.
+
+### Phase 17.1 — Foundation Hardening
+
+- `app/vision/constants.py` — single source of truth for
+  `SUPPORTED_FILE_TYPES` (8-extension `frozenset`),
+  `MAX_FILE_SIZE_BYTES` (20 MiB), and `CONFIDENCE_FLOOR`
+  (0.30). Pinned by `tests/test_supported_file_types.py`.
+- 20 MB upload size enforcement (Content-Length pre-check +
+  64 KB streaming backstop) — `tests/test_size_enforcement.py`.
+- Confidence floor enforcement at the route layer —
+  `tests/test_confidence_floor.py`.
+- End-to-end ingest test against synthetic drawing fixtures
+  — `tests/test_drawing_ingest_e2e.py`.
+- 17.1 audit at commit `6e8197b`: 984 tests passing.
+
+### Phase 17.2a — Drawing Ingest → Build Integration
+
+**Integration milestone, not a capability milestone.** The
+existing drawing-ingest pipeline (17.1) is wired through the
+existing orchestrator so an uploaded drawing can optionally
+flow all the way to a revision. **Auto-build is opt-in and
+off by default** per spec §7.2 / §7.3.
+
+**Commits on `phase17-drawing-ingestion`:**
+
+| Commit | Subject | Test delta |
+|---|---|---:|
+| `358e42a` | Commit 1/4: archive_revision additive ingestion_path extension | +7 |
+| `8c24b9f` | Commit 2/4: shared upload-validation helper, no route change | +0 |
+| `2894a99` | Commit 3a/4: MachineGraph → orchestrator config adapter | +18 |
+| `858752e` | Commit 3a.5/4: orchestrator auto_promote kwarg + promotion_mode | +6 |
+| `be1a72a` | Commit 3b/4: POST /api/drawing/ingest-and-build route | +21 |
+| (docs) | Commit 4/4: docs sync (this file + 3 others) | +0 |
+
+**Route count (Method A, `@router.*` decorators in
+`app/api/routes.py`):** 55 → 56. Pinned by
+`test_method_a_route_count_is_56`.
+
+**Governance:** drawing-ingested builds are constitutionally
+incapable of promoting a champion. The orchestrator is
+called with `auto_promote=False`, the route passes
+`auto_promote=False`, and three test classes
+(`TestRunMachineJobAutoPromote`, `TestOrchestratorCall`,
+`TestGovernanceStatement`) pin the contract at three
+layers. Champion lineage remains under explicit engineering
+lifecycle action.
+
+**17.2a audit:** 1039 tests passing, 1 skipped (pre-existing).
+Net **+55 tests** over the 17.1g baseline of 984.
+
+### Phase 17 — Not in scope for 17.2a
+
+These belong to later sub-phases (17.3 → 17.6):
+
+- 17.3 review-before-commit endpoints (the **default**,
+  not 17.2).
+- 17.4 hemp decorticator validation pack (6 A3 PDFs +
+  sidecars).
+- 17.5 operator / developer documentation.
+- 17.6 production hardening (audit log, rate limit, security).
+- AI vision models, handwriting model, new file types,
+  CAD reconstruction, GD&T interpretation. All out of
+  scope for the entire 17.x line without a spec amendment.
+
+---
+
 ## Future Capabilities (Not Yet Planned)
 
 - Factory-Level Process Modelling (receiving → decorticator → cleaner → dryer → baler → storage)
@@ -478,6 +555,8 @@
 | v1.2.0 | Specialized Agent Ecosystem | ✅ Done |
 | v1.3.0 | Hardware Feedback Foundation | ✅ Done |
 | v1.4.0 | Hardware Feedback Loop Complete (Phase 7) | ✅ Current |
+| v1.5.0-rc | Phase 17.1 Foundation Hardening (file types, size cap, confidence floor) | ✅ Done |
+| v1.5.0-rc | Phase 17.2a Drawing Ingest → Build Integration (opt-in auto-build) | ✅ Done |
 | v2.0.0 | Autonomous Engineering Intelligence Platform | 🔲 |
 
 ---
@@ -505,6 +584,8 @@
 | Edge Cases | 20 | 25 | 25 |
 | Bounds Validation Layers | 3 | 3 | 3 |
 | Documentation | 95% | 95% | 100% |
+| (Phase 17.2a) Test Count | 984 | 1039 | — |
+| (Phase 17.2a) Drawing routes | 1 | 2 | — |
 
 ---
 

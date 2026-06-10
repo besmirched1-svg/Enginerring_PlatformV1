@@ -46,8 +46,14 @@ flowchart LR
         BOM[app/bom/]
     end
 
+    subgraph vision["Drawing ingest (Phase 17)"]
+        VIS[app/vision/]
+    end
+
     API --> DIR
     API --> PROD
+    API --> VIS
+    API --> CORE
     CLI --> PROD
     CLI --> REAS
     CLI --> RES
@@ -75,6 +81,8 @@ flowchart LR
     RES --> KNOW
 
     CAD --> BOM
+
+    VIS --> GRAPH[app/graph/]
 ```
 
 **Read this as:** arrows mean "depends on" / "imports from". The dotted
@@ -95,6 +103,7 @@ desired).
 | `app/reasoning/` | mining & rules over knowledge records | mutating the knowledge store, physics derivations |
 | `app/telemetry/` | sensor ingest, deviation detection, feedback triggers | manufacturing math, knowledge-store schema |
 | `app/cad/`, `app/bom/` | OpenSCAD render, BOM generation | manufacturing analyzers, telemetry |
+| `app/vision/` | PDF/image → MachineGraph extraction (Phase 17); single-direction dependency: may import from `app/graph/`, may NOT import from `app/core/`, `app/director/`, `app/manufacturing/`, `app/production/`, or `app/physics/`. The route in `app/api/routes.py` is the only place that bridges vision outputs into the orchestrator. | owning engineering math; touching the orchestrator or promotion logic; the champion pointer |
 | `app/api/`, `app/runtime/cli.py` | HTTP and CLI surfaces | business logic; should delegate to `director` or `production` |
 
 ## Per-directory responsibility
@@ -126,6 +135,7 @@ desired).
 | `app/reasoning/` | Correlation mining, range patterns, rule extraction, recommendations, adaptive mutation | `tests/test_reasoning.py` |
 | `app/research/` | Autonomous research agent (entity/parameter/fact extraction, knowledge graph) | `tests/test_research.py` |
 | `app/runtime/` | CLI, service registry, supervisor, backup, auth, audit, signing, deployment, distributed compute | `tests/test_runtime.py`, `tests/test_platform_ops.py` |
+| `app/vision/` | **Drawing ingest pipeline (Phase 17)**: PDF/image → MachineGraph; constants, upload validation, orchestrator adapter. Pure-data layer; no imports from `app/manufacturing/`, `app/director/`, or `app/core/`. The route in `app/api/routes.py` is the only place that bridges vision outputs into the orchestrator. | `tests/test_vision.py`, `tests/test_supported_file_types.py`, `tests/test_size_enforcement.py`, `tests/test_confidence_floor.py`, `tests/test_drawing_ingest_e2e.py`, `tests/test_drawing_ingest_routes.py`, `tests/test_orchestrator_adapter.py`, `tests/test_revisions_ingestion_path.py`, `tests/test_drawing_ingest_and_build_routes.py` |
 | `app/simulation/` | Steady-state process simulation | (covered by integration tests) |
 | `app/telemetry/` | Sensor ingest, deviation detection, feedback triggers | `tests/test_hardware_feedback_loop.py` |
 | `app/ai/` | Reserved for AI-specific helpers | (no current consumers) |
