@@ -2504,3 +2504,354 @@ def approve_ingestion(
         "to_state": new_state.value,
         "actor": payload.actor,
     }
+
+
+# =====================================================================
+# Phase 17.3 — /api/drawing/ingest/{ingestion_id}/commit
+# =====================================================================
+#
+# POST /api/drawing/ingest/{ingestion_id}/commit
+#     Body: { "actor": "<string>",
+#             "reason": "<optional string>" }
+#
+#     This is the operator-initiated commit endpoint
+#     and the ONLY path that can promote a champion
+#     from a drawing-ingested build. The review
+#     state must be APPROVED at the time of the
+#     call. The /approve route is what gets the
+#     state to APPROVED; this route is what
+#     consumes that authorization.
+#
+#     The semantic transition of Phase 17.3 is
+#     enforced here:
+#
+#         pre-17.3:  completed == promotable
+#         post-17.3: completed != promotable
+#
+#     A build that completes successfully is NOT
+#     promotable. The promotion_gate
+#     (``app.core.promotion_gate.promotion_allowed``)
+#     is what authorizes the call; the route layer
+#     constructs the RevisionIntent with
+#     intent_source=EXPLICIT_COMMIT and
+#     review_state=APPROVED (read from the
+#     ReviewStore). The gate's verdict is the
+#     authoritative one; the orchestrator's
+#     promotion_mode is the response.
+#
+#     The PROMOTED state is the terminal state for
+#     the ingestion's review lifecycle. The route
+#     is the only legitimate caller of
+#     ReviewStore.transition() with to_state=
+#     PROMOTED. The state machine permits the
+#     APPROVED -> PROMOTED edge; the gate
+#     authorizes the actual promotion.
+#
+#     If the gate refused (e.g., the review state
+#     was not APPROVED at the moment of the call,
+#     which would be a race), the orchestrator
+#     returns promotion_mode="rejected_by_governance"
+#     and the route returns 200 with the
+#     promotion_mode in the response body so the
+#     operator can see why the build completed
+#     without promoting. The review state is NOT
+#     transitioned to PROMOTED in this case (the
+#     ingestion is left in APPROVED, eligible for
+#     a re-commit attempt).
+#
+#     If the ingestion is already PROMOTED (i.e.,
+#     has a terminal COMMIT record in the
+#     IngestionStore), the route returns 409
+#     Conflict without calling the orchestrator.
+#     This is the one-way transition enforcement:
+#     once committed, the ingestion cannot be
+#     re-committed.
+# =====================================================================
+
+
+class CommitRequest(BaseModel):
+    """The body of the /commit route.
+
+    The route is the operator-initiated commit
+    endpoint. The body carries the operator's
+    identity (``actor``) and an optional reason
+    for the audit trail.
+
+    No ``to_state`` is required: the only legal
+    target for the /commit route is PROMOTED, and
+    that target is implied by the route. The
+    /approve route is for the review-decision
+    transitions; the /commit route is for the
+    promotion transition.
+    """
+    actor: str
+    reason: Optional[str] = None
+
+
+@router.post("/drawing/ingest/{ingestion_id}/commit")
+def commit_ingestion(
+    ingestion_id: str,
+    payload: CommitRequest,
+):
+    """Commit the ingestion's current state to a
+    revision. The only path that can promote a
+    champion from a drawing-ingested build.
+
+    Returns 200 with the orchestrator's
+    promotion_mode on success. Returns 400 on
+    malformed requests. Returns 404 if the
+    ingestion_id is unknown. Returns 409 if the
+    state is not APPROVED, or if the ingestion
+    has already been committed.
+    """
+    from app.vision.ingestion_store import IngestionStore
+    from app.vision.review_state import ReviewState
+    from app.vision.review_store import ReviewStore
+    from app.vision.intent_adapter import (
+        IntentRequestContext,
+        IntentRequestKind,
+        build_intent,
+    )
+    from app.vision.orchestrator_adapter import (
+        graph_to_orchestrator_config,
+    )
+    from app.core.promotion_gate import promotion_allowed, explain_decision
+    import hashlib
+
+    ingestion_store = IngestionStore()
+
+    # 404 if the ingestion has never been written.
+    current = ingestion_store.read_current(ingestion_id)
+    if current is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ingestion not found: {ingestion_id}",
+        )
+
+    # 409 if the ingestion is already committed. The
+    # commit is a one-way transition. The
+    # IngestionStore's has_commit check is a fast
+    # path that avoids re-running the orchestrator
+    # for a previously-committed ingestion.
+    if ingestion_store.has_commit(ingestion_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "already_committed",
+                "message": (
+                    f"Ingestion {ingestion_id} has already been "
+                    f"committed. The commit is a one-way transition."
+                ),
+            },
+        )
+
+    # The review state must be APPROVED at the
+    # time of the call. Anything else is a 409.
+    # The route layer reads from the ReviewStore
+    # (not the IngestionStore); the two are
+    # separate domains.
+    review_store = ReviewStore()
+    review_state = review_store.read_current_state(ingestion_id)
+    if review_state != ReviewState.APPROVED:
+        # The state machine's contract: only
+        # APPROVED can transition to PROMOTED. The
+        # route layer translates any other state
+        # to a 409 with a clear message.
+        from app.vision.review_state import legal_next_states
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "not_approved",
+                "from_state": review_state.value,
+                "required_state": "approved",
+                "legal_next_states": sorted(
+                    s.value for s in legal_next_states(review_state)
+                ),
+                "message": (
+                    f"Ingestion review state is "
+                    f"{review_state.value!r}, not 'approved'. "
+                    f"The /approve route must be called first."
+                ),
+            },
+        )
+
+    # Build the RevisionIntent via the adapter. The
+    # adapter is the only legitimate constructor
+    # of RevisionIntent. The route layer never
+    # constructs the intent directly.
+    #
+    # The intent carries:
+    # - commit_requested=True (the route is the
+    #   commit endpoint).
+    # - intent_source=EXPLICIT_COMMIT (operator-
+    #   initiated, not auto-build).
+    # - review_state=APPROVED (read from the
+    #   ReviewStore above).
+    # - ingestion_id (the source ingestion).
+    intent = build_intent(IntentRequestContext(
+        request_kind=IntentRequestKind.EXPLICIT_COMMIT,
+        commit_requested=True,
+        review_state=review_state,
+        ingestion_id=ingestion_id,
+        actor=payload.actor,
+    ))
+
+    # The gate's verdict is the authoritative one.
+    # Even though the route layer has already
+    # checked the review state, the gate is the
+    # load-bearing boundary; the orchestrator
+    # consults it independently. Pinning the
+    # gate's verdict here (in addition to the
+    # orchestrator's response) is a defense-in-
+    # depth assertion that the route and the
+    # gate agree.
+    gate_decision = explain_decision(intent, auto_promote=True)
+    if not gate_decision["allowed"]:
+        # This should not happen given the route
+        # layer's pre-check above, but if it does
+        # (e.g., a future refactor decouples the
+        # route and the gate), we surface the
+        # gate's verdict verbatim.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "gate_refused",
+                "gate_decision": gate_decision,
+                "message": (
+                    f"promotion_gate refused: {gate_decision['reason']}"
+                ),
+            },
+        )
+
+    # Project the current graph (snapshot +
+    # patches) into the orchestrator's config
+    # shape. The graph is stored as a dict; the
+    # adapter is the bridge.
+    from app.graph.models import MachineGraph
+    graph = MachineGraph.from_dict(current["graph"])
+    bom_rows = current.get("bom_rows", [])
+    config = graph_to_orchestrator_config(graph, bom_rows)
+
+    # The ingestion_path is the audit trail
+    # extension. The orchestrator's manifest
+    # records the source ingestion so the
+    # lineage is traceable end-to-end.
+    graph_dict = current["graph"]
+    graph_bytes = json.dumps(
+        graph_dict, sort_keys=True, default=str,
+    ).encode("utf-8")
+    graph_hash = "sha256:" + hashlib.sha256(
+        graph_bytes
+    ).hexdigest()
+    ingestion_path = {
+        "source_file": current.get("source_file", "unknown"),
+        "ocr_confidence": current.get("ocr_confidence", 0.0),
+        "graph_hash": graph_hash,
+        "ingestion_id": ingestion_id,
+    }
+
+    # Call the orchestrator with the intent. The
+    # orchestrator's promotion_mode is the
+    # response: "attempted" if the gate said yes
+    # AND the score cleared the threshold,
+    # "below_threshold" if the gate said yes but
+    # the score was too low, or one of the other
+    # three pre-17.3 values for legacy paths.
+    orchestrator = _get_orchestrator()
+    run_result = orchestrator.run_machine_job(
+        machine_name=current.get("machine_name", "unknown"),
+        config=config,
+        ingestion_path=ingestion_path,
+        auto_promote=True,  # the gate's verdict is authoritative
+        revision_intent=intent,
+    )
+
+    # The orchestrator's promotion_mode decides
+    # whether the commit record is written and
+    # whether the state is transitioned to
+    # PROMOTED. The two are coupled: a
+    # rejected_by_governance outcome means the
+    # build completed but the gate refused; the
+    # ingestion is left in APPROVED, eligible
+    # for a re-commit attempt after the
+    # operator investigates. The COMMIT record
+    # is the audit-trail anchor for a successful
+    # commit, so it is only written for the
+    # non-rejected cases.
+    promotion_mode = run_result.get("promotion_mode")
+    if promotion_mode == "rejected_by_governance":
+        # Defense in depth: the route's pre-check
+        # and the gate should agree. If they
+        # don't, we surface the orchestrator's
+        # verdict and leave the ingestion in
+        # APPROVED. No COMMIT record is written.
+        return {
+            "status": "ok",
+            "ingestion_id": ingestion_id,
+            "revision_id": run_result.get("revision_id"),
+            "promotion_mode": promotion_mode,
+            "promoted": run_result.get("promoted", False),
+            "score": run_result.get("score"),
+            "directory": run_result.get("directory"),
+            "committed": False,
+            "note": (
+                "Build completed but the promotion_gate "
+                "refused to promote. The ingestion remains "
+                "APPROVED; re-call /commit after the issue "
+                "is resolved."
+            ),
+        }
+
+    # The gate authorized the commit. Write the
+    # terminal COMMIT record to the
+    # IngestionStore. The record is the audit
+    # trail that ties the ingestion to the
+    # produced revision.
+    ingestion_store.write_commit(
+        ingestion_id,
+        revision_id=run_result.get("revision_id"),
+        orchestrator_result={
+            "score": run_result.get("score"),
+            "promoted": run_result.get("promoted"),
+            "promotion_mode": promotion_mode,
+            "directory": run_result.get("directory"),
+        },
+    )
+
+    # Transition the review state to PROMOTED.
+    # The state machine permits APPROVED -> PROMOTED;
+    # the gate authorized the call. The store's
+    # transition() is the atomic read-validate-write.
+    try:
+        review_store.transition(
+            ingestion_id,
+            to_state=ReviewState.PROMOTED,
+            actor=payload.actor,
+            reason=payload.reason or "Commit endpoint called.",
+        )
+    except Exception as exc:
+        # The orchestrator already ran; the
+        # COMMIT record is already written. If
+        # the state transition fails (very
+        # unlikely given the state machine
+        # permits APPROVED -> PROMOTED), we
+        # surface the error so the operator
+        # can see the inconsistency.
+        logger.error(
+            "Failed to transition review state to PROMOTED: %s", exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"State transition failed: {exc}",
+        )
+
+    return {
+        "status": "ok",
+        "ingestion_id": ingestion_id,
+        "revision_id": run_result.get("revision_id"),
+        "promotion_mode": promotion_mode,
+        "promoted": run_result.get("promoted", False),
+        "score": run_result.get("score"),
+        "directory": run_result.get("directory"),
+        "committed": True,
+    }
