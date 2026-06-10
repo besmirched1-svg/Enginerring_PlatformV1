@@ -80,6 +80,91 @@ class TestRegisterEndpoint:
         r = client.post("/api/improve/register", json={"machine_name": "test"})
         assert r.status_code == 422
 
+    def test_register_passes_auto_promote_false(self, client):
+        """Phase 17.3 (task #45): the legacy
+        /improve/register route now passes
+        auto_promote=False to the orchestrator. A
+        legacy caller cannot promote a champion.
+
+        The pre-17.3 behavior was: the orchestrator
+        ran with auto_promote defaulting to True,
+        so a successful build that cleared the
+        threshold would silently change the
+        champion lineage. The 17.3 design
+        discipline says: "completed != promotable"
+        — even legacy callers must explicitly
+        opt-in to champion promotion via the new
+        /commit flow.
+
+        The test pins the new contract: the
+        kwargs to run_machine_job include
+        auto_promote=False.
+        """
+        payload = {
+            "machine_name": "test_roller",
+            "config": {
+                "roller": {"diameter": 180, "width": 450, "shaft": 40}
+            },
+        }
+        mock_result = {
+            "revision_id": "rev_test01",
+            "score": 0.72,
+            "promoted": False,
+            "promotion_mode": "disabled",
+            "evaluation": {"composite": 0.72, "needs_improvement": True,
+                           "metrics": {}, "all_issues": []},
+            "directory": "outputs/revisions/test_roller/rev_test01",
+            "parent_info": None,
+        }
+        with patch("app.api.routes._get_orchestrator") as mock_get:
+            mock_orch = MagicMock()
+            mock_orch.run_machine_job.return_value = mock_result
+            mock_get.return_value = mock_orch
+            r = client.post("/api/improve/register", json=payload)
+        assert r.status_code == 200
+        # Inspect the call kwargs to confirm
+        # auto_promote=False was passed.
+        call_kwargs = mock_orch.run_machine_job.call_args.kwargs
+        assert call_kwargs.get("auto_promote") is False
+
+    def test_register_response_carries_promotion_mode_disabled(
+        self, client,
+    ):
+        """The /improve/register response carries
+        promotion_mode="disabled" by construction
+        (auto_promote=False). The caller can see
+        that the build completed without promoting.
+
+        This is the audit-trail signal for legacy
+        callers: a successful build no longer
+        implies a champion promotion.
+        """
+        payload = {
+            "machine_name": "test_roller_2",
+            "config": {
+                "roller": {"diameter": 200, "width": 500, "shaft": 50}
+            },
+        }
+        mock_result = {
+            "revision_id": "rev_test02",
+            "score": 0.65,
+            "promoted": False,
+            "promotion_mode": "disabled",
+            "evaluation": {"composite": 0.65, "needs_improvement": True,
+                           "metrics": {}, "all_issues": []},
+            "directory": "outputs/revisions/test_roller_2/rev_test02",
+            "parent_info": None,
+        }
+        with patch("app.api.routes._get_orchestrator") as mock_get:
+            mock_orch = MagicMock()
+            mock_orch.run_machine_job.return_value = mock_result
+            mock_get.return_value = mock_orch
+            r = client.post("/api/improve/register", json=payload)
+        assert r.status_code == 200
+        details = r.json()["details"]
+        assert details["promotion_mode"] == "disabled"
+        assert details["promoted"] is False
+
 
 class TestSwarmRunEndpoint:
     def test_swarm_run_queued(self, client):

@@ -121,12 +121,47 @@ def get_health():
 
 @router.post("/improve/register")
 def register_new_candidate(payload: ManualJobSubmission):
+    """Legacy route: register a new candidate
+    revision for a machine. Phase 17.3 (task #45)
+    changes the default governance: the route now
+    passes ``auto_promote=False`` to the
+    orchestrator, so a legacy caller cannot
+    promote a champion. Champion lineage is
+    preserved; the build is run but not promoted.
+
+    To opt-in to champion promotion, callers must
+    use the new flow: /api/drawing/ingest followed
+    by /api/drawing/ingest/{id}/approve followed
+    by /api/drawing/ingest/{id}/commit. The
+    /commit route is the only path that can
+    promote a champion.
+
+    The pre-17.3 behavior — implicit promotion
+    on a successful build — is no longer
+    accessible from this route. The route is
+    kept for backward compatibility with callers
+    that expect the build to run, but the
+    promotion is now opt-in via the new flow.
+
+    The response carries the orchestrator's
+    promotion_mode so the caller can see that
+    the build completed without promoting.
+    """
     orchestrator = _get_orchestrator()
     try:
         logger.info("HTTP Gateway: triggering CAD run for %s", payload.machine_name)
+        # Phase 17.3 (task #45): explicit
+        # auto_promote=False. The legacy caller
+        # cannot promote a champion. The new
+        # /commit route is the only path that
+        # can promote.
         result = orchestrator.run_machine_job(
-            machine_name=payload.machine_name, config=payload.config,
-            chain_id=None, attempt_in_chain=0)
+            machine_name=payload.machine_name,
+            config=payload.config,
+            chain_id=None,
+            attempt_in_chain=0,
+            auto_promote=False,
+        )
         return {"status": "processed", "details": result}
     except Exception as e:
         logger.error("Pipeline failure: %s", e)
