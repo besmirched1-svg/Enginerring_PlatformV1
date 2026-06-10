@@ -737,3 +737,320 @@ class TestFactoryValidation:
         assert FACTORY_INPUT_BOUNDS
         assert callable(clamp_factory_input)
         assert callable(validate_factory_graph)
+
+
+# ===================================================================
+# Phase 16.3: Predictive Maintenance
+# ===================================================================
+#
+# The PM module is a thin consumer of app.physics.bearings and
+# app.physics.fatigue. These tests verify the public interface the
+# factory director (Phase 16.2) will rely on: per-component health
+# records, the scheduler's ranking, the severity bands, and the
+# convenience function for the hot path.
+
+
+# A canned bearing spec for tests. Values picked so L10h life is small
+# enough that a 600h elapsed time is meaningful (consumed ~80%).
+_TEST_BEARING_SPEC = {
+    "machine_id": "decort_1",
+    "component": "drive_end",
+    "bore_diameter": 50,
+    "outer_diameter": 90,
+    "width": 20,
+    "dynamic_load_rating": 35000,
+    "static_load_rating": 25000,
+    "limiting_speed": 7500,
+    "radial_load": 5000,
+    "axial_load": 1000,
+    "speed": 1500,
+}
+
+
+class TestPredictiveMaintenance:
+    def test_bearing_health_monitor_returns_record(self):
+        from app.factory.predictive_maintenance import BearingHealthMonitor
+        rec = BearingHealthMonitor().estimate(
+            **_TEST_BEARING_SPEC,
+            elapsed_operating_hours=600,
+        )
+        assert rec.machine_id == "decort_1"
+        assert rec.component == "drive_end"
+        assert rec.l10h_hours > 0
+        assert 0.5 < rec.consumed_fraction < 1.0
+        assert rec.severity in ("medium", "high")
+
+    def test_bearing_health_severity_bands(self):
+        from app.factory.predictive_maintenance import BearingHealthMonitor
+        monitor = BearingHealthMonitor()
+        # low: 10% consumed
+        low = monitor.estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=70)
+        assert low.severity == "low"
+        # high: 85% consumed
+        high = monitor.estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=640)
+        assert high.severity in ("high", "medium", "critical")
+        # past L10h
+        past = monitor.estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=2000)
+        assert past.consumed_fraction > 1.0
+        assert past.remaining_hours == 0.0
+        assert past.severity == "critical"
+
+    def test_bearing_health_handles_nan_inputs(self):
+        from app.factory.predictive_maintenance import BearingHealthMonitor
+        rec = BearingHealthMonitor().estimate(
+            machine_id="m", component="c",
+            bore_diameter=float("nan"),
+            outer_diameter=90, width=20,
+            dynamic_load_rating=35000, static_load_rating=25000,
+            limiting_speed=7500,
+            radial_load=float("inf"),
+            elapsed_operating_hours=-100,
+        )
+        # The defensive clamps should have produced a valid record.
+        assert isinstance(rec.l10h_hours, float)
+        # NaN/infinite inputs get warned about
+        assert rec.notes  # at least one warning recorded
+
+    def test_shaft_fatigue_accumulator_returns_record(self):
+        from app.factory.predictive_maintenance import ShaftFatigueAccumulator
+        rec = ShaftFatigueAccumulator().accumulate(
+            machine_id="m1", component="shaft",
+            ultimate_tensile_strength=600, yield_strength=400,
+            stress_blocks=[(200, 0, 50000), (300, 0, 20000), (400, 0, 5000)],
+            frequency=2.0,
+        )
+        assert rec.machine_id == "m1"
+        assert rec.stress_blocks == 3
+        assert 0.0 <= rec.damage_fraction
+        assert rec.severity in ("low", "medium", "high", "critical")
+
+    def test_shaft_fatigue_drops_bad_blocks(self):
+        from app.factory.predictive_maintenance import ShaftFatigueAccumulator
+        rec = ShaftFatigueAccumulator().accumulate(
+            machine_id="m1", component="shaft",
+            ultimate_tensile_strength=600, yield_strength=400,
+            # 4-tuple, 2-tuple, and a valid 3-tuple
+            stress_blocks=[(200, 0, 100, 99), (200, 0), (200, 0, 5000)],
+            frequency=2.0,
+        )
+        # Only the 3-tuple survives
+        assert rec.stress_blocks == 1
+
+    def test_shaft_fatigue_no_blocks(self):
+        from app.factory.predictive_maintenance import ShaftFatigueAccumulator
+        rec = ShaftFatigueAccumulator().accumulate(
+            machine_id="m1", component="shaft",
+            ultimate_tensile_strength=600, yield_strength=400,
+            stress_blocks=[],
+        )
+        assert rec.damage_fraction == 0.0
+        assert rec.severity == "low"
+        assert any("no valid" in n.lower() for n in rec.notes)
+
+    def test_scheduler_emits_action_for_worn_bearing(self):
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, MaintenanceScheduler,
+        )
+        bearing = BearingHealthMonitor().estimate(
+            **_TEST_BEARING_SPEC, elapsed_operating_hours=640,  # ~85% consumed
+        )
+        sched = MaintenanceScheduler().schedule(bearings=[bearing])
+        assert sched.actions
+        assert sched.actions[0].component_type == "bearing"
+        assert sched.actions[0].action in ("inspect", "replace")
+
+    def test_scheduler_emits_no_actions_for_healthy_components(self):
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, MaintenanceScheduler, ShaftFatigueAccumulator,
+        )
+        bearing = BearingHealthMonitor().estimate(
+            **_TEST_BEARING_SPEC, elapsed_operating_hours=10,  # ~1% consumed
+        )
+        shaft = ShaftFatigueAccumulator().accumulate(
+            machine_id="m", component="shaft",
+            ultimate_tensile_strength=600, yield_strength=400,
+            stress_blocks=[(50, 0, 1000)],  # tiny stress
+        )
+        sched = MaintenanceScheduler().schedule(bearings=[bearing], shafts=[shaft])
+        assert sched.actions == []
+
+    def test_scheduler_ranks_by_severity_then_due(self):
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, MaintenanceScheduler,
+        )
+        # Three bearings at increasing severity
+        b_low = BearingHealthMonitor().estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=300)
+        b_med = BearingHealthMonitor().estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=550)
+        b_hi = BearingHealthMonitor().estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=700)
+        sched = MaintenanceScheduler().schedule(bearings=[b_low, b_med, b_hi])
+        # Severities should be in descending order
+        ranks = [a.severity for a in sched.actions]
+        severity_order = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+        rank_nums = [severity_order.get(s, 0) for s in ranks]
+        assert rank_nums == sorted(rank_nums, reverse=True)
+
+    def test_scheduler_respects_horizon(self):
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, MaintenanceScheduler,
+        )
+        # A bearing with a long remaining life but a *scheduled* inspect
+        # far in the future should drop out of a short horizon.
+        bearing = BearingHealthMonitor().estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=300)
+        sched = MaintenanceScheduler().schedule(bearings=[bearing], horizon_hours=24.0)
+        # The default inspection interval is 500h, so a 24h horizon
+        # should drop the action.
+        assert sched.actions == []
+
+    def test_estimate_remaining_life_from_telemetry(self):
+        from app.factory.predictive_maintenance import (
+            estimate_remaining_life_from_telemetry,
+        )
+        r = estimate_remaining_life_from_telemetry(
+            machine_id="m", component="c",
+            bearing_spec={
+                "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+                "dynamic_load_rating": 35000, "static_load_rating": 25000,
+                "limiting_speed": 7500, "radial_load": 2000, "axial_load": 500,
+                "speed": 1500,
+            },
+            elapsed_operating_hours=400,
+        )
+        assert r > 0
+
+    def test_estimate_remaining_life_derates_with_load(self):
+        from app.factory.predictive_maintenance import (
+            estimate_remaining_life_from_telemetry,
+        )
+        nominal = estimate_remaining_life_from_telemetry(
+            machine_id="m", component="c",
+            bearing_spec={
+                "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+                "dynamic_load_rating": 35000, "static_load_rating": 25000,
+                "limiting_speed": 7500, "radial_load": 2000, "axial_load": 500,
+                "speed": 1500,
+            },
+            elapsed_operating_hours=400,
+            telemetry_load_fraction=1.0,
+        )
+        # ISO 281: life scales with (1/P)^3. At 1.5x load, life should
+        # be reduced by (1/1.5)^3 ~ 0.296.
+        high = estimate_remaining_life_from_telemetry(
+            machine_id="m", component="c",
+            bearing_spec={
+                "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+                "dynamic_load_rating": 35000, "static_load_rating": 25000,
+                "limiting_speed": 7500, "radial_load": 2000, "axial_load": 500,
+                "speed": 1500,
+            },
+            elapsed_operating_hours=400,
+            telemetry_load_fraction=1.5,
+        )
+        # The high-load estimate should be smaller (life derated).
+        assert high < nominal
+
+    def test_to_dict_shapes(self):
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, FatigueAccumulation, MaintenanceAction,
+            MaintenanceSchedule, ShaftFatigueAccumulator,
+        )
+        b = BearingHealthMonitor().estimate(**_TEST_BEARING_SPEC, elapsed_operating_hours=100)
+        s = ShaftFatigueAccumulator().accumulate(
+            machine_id="m", component="shaft",
+            ultimate_tensile_strength=600, yield_strength=400,
+            stress_blocks=[(200, 0, 5000)],
+        )
+        # All four dataclasses should serialize without raising.
+        d_b = b.to_dict()
+        d_s = s.to_dict()
+        assert "l10h_hours" in d_b
+        assert "damage_fraction" in d_s
+        a = MaintenanceAction(
+            action_id="x", machine_id="m", component="c",
+            component_type="bearing", action="inspect",
+            due_in_hours=10.0, severity="low",
+        )
+        d_a = a.to_dict()
+        assert d_a["action_id"] == "x"
+        sched = MaintenanceSchedule(actions=[a], horizon_hours=100.0)
+        d_sched = sched.to_dict()
+        assert d_sched["action_count"] == 1
+        assert d_sched["horizon_hours"] == 100.0
+
+    def test_uses_custom_analyzer(self):
+        # Caller-supplied analyzer (test double): confirms the seam.
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, BearingRemainingLife,
+        )
+
+        # The seam takes whatever object the analyzer returns. The
+        # real platform analyzer returns BearingResults with
+        # `fatigue_life_hours`, so the fake must provide the same
+        # attribute to be a faithful stand-in.
+        class _FakeResult:
+            fatigue_life_hours = 1000.0
+            operating_temperature = 60.0
+            static_safety_factor = 5.0
+            passed = True
+
+        def fake_analyzer(**kwargs) -> _FakeResult:
+            return _FakeResult()
+
+        rec = BearingHealthMonitor(bearing_analyzer=fake_analyzer).estimate(
+            **_TEST_BEARING_SPEC, elapsed_operating_hours=600,
+        )
+        assert rec.l10h_hours == 1000.0
+        assert rec.consumed_fraction == 0.6  # 600/1000
+        assert rec.remaining_hours == 400.0
+        # 0.6 consumed -> medium severity
+        assert rec.severity == "medium"
+
+    def test_package_exports(self):
+        from app.factory import (
+            BearingHealthMonitor,
+            BearingRemainingLife,
+            FatigueAccumulation,
+            MaintenanceAction,
+            MaintenanceSchedule,
+            MaintenanceScheduler,
+            ShaftFatigueAccumulator,
+            estimate_remaining_life_from_telemetry,
+        )
+        assert BearingHealthMonitor is not None
+        assert MaintenanceScheduler is not None
+
+    def test_cli_command_registered(self):
+        from app.runtime.cli import cmd_factory_predict_maintenance
+        assert callable(cmd_factory_predict_maintenance)
+
+    def test_api_route_registered(self):
+        from app.api.routes import router
+        paths = [r.path for r in router.routes]
+        assert "/factory/predict-maintenance" in paths
+
+    def test_api_round_trip(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+        body = {
+            "bearings": [
+                {
+                    "machine_id": "m1", "component": "c1",
+                    "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+                    "dynamic_load_rating": 35000, "static_load_rating": 25000,
+                    "limiting_speed": 7500, "radial_load": 5000, "axial_load": 1000,
+                    "speed": 1500, "elapsed_operating_hours": 600,
+                }
+            ],
+            "shafts": [],
+            "horizon_hours": 8760,
+        }
+        r = client.post("/api/factory/predict-maintenance", json=body)
+        assert r.status_code == 200
+        out = r.json()
+        assert "actions" in out
+        assert out["action_count"] == len(out["actions"])
+        # Severity values must be one of the four bands
+        valid = {"low", "medium", "high", "critical"}
+        for a in out["actions"]:
+            assert a["severity"] in valid

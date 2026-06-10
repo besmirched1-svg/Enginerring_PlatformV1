@@ -1156,6 +1156,110 @@ def get_factory_result(job_id: str):
 
 
 # =====================================================================
+# Predictive Maintenance API - Phase 16.3
+# =====================================================================
+#
+# POST /api/factory/predict-maintenance
+#     Body: { "bearings": [...], "shafts": [...], "horizon_hours": 8760 }
+#     Returns: ranked MaintenanceSchedule (actions + warnings)
+# =====================================================================
+
+
+class BearingSpecModel(BaseModel):
+    machine_id: str = ""
+    component: str = ""
+    bore_diameter: float
+    outer_diameter: float
+    width: float
+    dynamic_load_rating: float
+    static_load_rating: float
+    limiting_speed: float
+    radial_load: float = 0.0
+    axial_load: float = 0.0
+    speed: float = 0.0
+    elapsed_operating_hours: float = 0.0
+    temperature_change: float = 0.0
+    bearing_type: str = "ball"
+
+
+class ShaftSpecModel(BaseModel):
+    machine_id: str = ""
+    component: str = ""
+    ultimate_tensile_strength: float
+    yield_strength: float
+    stress_blocks: List[List[float]] = []   # [[sigma_a, sigma_m, cycles], ...]
+    frequency: float = 0.0
+    load_type: str = "bending"
+
+
+class PredictiveMaintenanceRequest(BaseModel):
+    bearings: List[BearingSpecModel] = []
+    shafts: List[ShaftSpecModel] = []
+    horizon_hours: float = 8760.0
+    min_damage_for_action: float = 0.5
+    min_consumed_for_action: float = 0.6
+
+
+@router.post("/factory/predict-maintenance", tags=["factory"])
+def post_factory_predict_maintenance(req: PredictiveMaintenanceRequest):
+    """Run predictive maintenance analysis across bearings and shafts.
+
+    Each bearing is analyzed against ``app.physics.bearings`` for L10h
+    life; each shaft against ``app.physics.fatigue`` for Miner's-rule
+    damage. The schedule is ranked by (severity desc, due_in_hours asc)
+    and trimmed to the planning horizon.
+    """
+    from app.factory.predictive_maintenance import (
+        BearingHealthMonitor,
+        MaintenanceScheduler,
+        ShaftFatigueAccumulator,
+    )
+
+    bearings = []
+    for b in req.bearings:
+        rec = BearingHealthMonitor().estimate(
+            machine_id=b.machine_id,
+            component=b.component,
+            bore_diameter=b.bore_diameter,
+            outer_diameter=b.outer_diameter,
+            width=b.width,
+            dynamic_load_rating=b.dynamic_load_rating,
+            static_load_rating=b.static_load_rating,
+            limiting_speed=b.limiting_speed,
+            radial_load=b.radial_load,
+            axial_load=b.axial_load,
+            speed=b.speed,
+            elapsed_operating_hours=b.elapsed_operating_hours,
+            temperature_change=b.temperature_change,
+            bearing_type=b.bearing_type,
+        )
+        bearings.append(rec)
+
+    shafts = []
+    for s in req.shafts:
+        rec = ShaftFatigueAccumulator().accumulate(
+            machine_id=s.machine_id,
+            component=s.component,
+            ultimate_tensile_strength=s.ultimate_tensile_strength,
+            yield_strength=s.yield_strength,
+            stress_blocks=[tuple(x) for x in (s.stress_blocks or [])],
+            frequency=s.frequency,
+            load_type=s.load_type,
+        )
+        shafts.append(rec)
+
+    schedule = MaintenanceScheduler(
+        min_damage_for_action=req.min_damage_for_action,
+        min_consumed_for_action=req.min_consumed_for_action,
+    ).schedule(
+        bearings=bearings,
+        shafts=shafts,
+        horizon_hours=req.horizon_hours,
+    )
+    return schedule.to_dict()
+
+
+# =====================================================================
 # Economic Engineering API - Phase 12
 # =====================================================================
 #

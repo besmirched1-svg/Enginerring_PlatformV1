@@ -112,7 +112,7 @@ desired).
 | `app/economics/` | Capital, operating, lifecycle, ROI, NPV, IRR | `tests/test_economics.py` |
 | `app/evolution/` | NSGA-II multi-objective search | (covered by `test_evolution.py`) |
 | `app/experiment/` | DOE / experiment lab | `tests/test_experiment_lab.py` |
-| `app/factory/` | **Plant-scale layer**: FactoryGraph, mass/energy balance, bottleneck, layout, NSGA-II line optimization, input validation | `tests/test_factory.py` |
+| `app/factory/` | **Plant-scale layer**: FactoryGraph, mass/energy balance, bottleneck, layout, NSGA-II line optimization, input validation, predictive maintenance | `tests/test_factory.py` |
 | `app/factory_director/` | (Phase 16.2) Combines per-machine manufacturing + production artifacts into plant-level orchestration | (added Phase 16.2) |
 | `app/graph/` | MachineGraph + YAML compiler | `tests/test_graph.py` |
 | `app/importers/` | External data import adapters | (covered by `test_graph.py`) |
@@ -227,3 +227,30 @@ math duplication with `app/manufacturing/` (zero hits). New factory
 code that needs to cross the boundary must do so through
 `app/factory_director/` (added in Phase 16.2), never by reaching
 across from a leaf analyzer.
+
+### Why predictive maintenance lives in `app/factory/` (not `app/manufacturing/`)
+
+Phase 16.3 added `app/factory/predictive_maintenance.py` with
+`BearingHealthMonitor`, `ShaftFatigueAccumulator`, and
+`MaintenanceScheduler`. The natural question is: why factory, not
+manufacturing? The answer is **scope**:
+
+- `app/manufacturing/` analyzers (`cutlists.py`, `weldmaps.py`,
+  `machining.py`, etc.) are *per-machine* and per-build. A
+  manufacturing analyzer answers "given this part, what is the cut
+  schedule?". Its lifecycle is one build.
+- `app/factory/predictive_maintenance.py` is *cross-machine on a
+  line* and *over time*. A bearing belongs to a unit that appears
+  in a `FactoryProcessGraph`; the scheduler rolls per-component
+  health records into a single plant-wide maintenance plan. Its
+  lifecycle is the operating life of the line.
+
+The PM module imports from `app.physics.bearings` and
+`app.physics.fatigue` (allowed by rule 1) and *consumes* their
+results without re-deriving L10h or Miner's-rule math (compliant with
+rule 2). The output is a `MaintenanceSchedule` — a planning artifact
+the factory director will consume, not a manufacturing analysis.
+If the line ever needs the *underlying* bearing analysis as a
+manufacturing deliverable (e.g. a bearing datasheet for a build
+record), the analyzer in `app.physics.bearings` is the source of
+truth; the PM module is the plant-level rollup.

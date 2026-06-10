@@ -10,6 +10,16 @@ from .models import (
     StreamType,
 )
 from .optimization import optimize_factory, FactoryIndividual, evaluate_factory
+from .predictive_maintenance import (
+    BearingHealthMonitor,
+    BearingRemainingLife,
+    FatigueAccumulation,
+    MaintenanceAction,
+    MaintenanceSchedule,
+    MaintenanceScheduler,
+    ShaftFatigueAccumulator,
+    estimate_remaining_life_from_telemetry,
+)
 from .validation import (
     FACTORY_INPUT_BOUNDS,
     clamp_factory_input,
@@ -33,6 +43,14 @@ __all__ = [
     "optimize_factory",
     "FactoryIndividual",
     "evaluate_factory",
+    "BearingHealthMonitor",
+    "BearingRemainingLife",
+    "FatigueAccumulation",
+    "MaintenanceAction",
+    "MaintenanceSchedule",
+    "MaintenanceScheduler",
+    "ShaftFatigueAccumulator",
+    "estimate_remaining_life_from_telemetry",
     "FACTORY_INPUT_BOUNDS",
     "clamp_factory_input",
     "validate_factory_graph",

@@ -838,6 +838,114 @@ def cmd_factory_optimize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_factory_predict_maintenance(args: argparse.Namespace) -> int:
+    """Run predictive maintenance analysis (Phase 16.3).
+
+    The spec file is JSON with the shape:
+
+        {
+          "bearings": [
+            {
+              "machine_id": "decort_1",
+              "component": "drive_end",
+              "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+              "dynamic_load_rating": 35000, "static_load_rating": 25000,
+              "limiting_speed": 7500,
+              "radial_load": 5000, "axial_load": 1000, "speed": 1500,
+              "elapsed_operating_hours": 600
+            }
+          ],
+          "shafts": [
+            {
+              "machine_id": "decort_1",
+              "component": "main_shaft",
+              "ultimate_tensile_strength": 600, "yield_strength": 400,
+              "stress_blocks": [[200, 0, 50000], [300, 0, 20000]],
+              "frequency": 2.0
+            }
+          ],
+          "horizon_hours": 8760
+        }
+
+    Prints a ranked maintenance schedule to stdout and exits 0.
+    """
+    import json
+    from pathlib import Path
+    from app.factory.predictive_maintenance import (
+        BearingHealthMonitor,
+        MaintenanceScheduler,
+        ShaftFatigueAccumulator,
+    )
+
+    spec_path = Path(args.spec)
+    with spec_path.open("r", encoding="utf-8") as fh:
+        spec = json.load(fh)
+
+    bearings = []
+    for b in spec.get("bearings", []) or []:
+        rec = BearingHealthMonitor().estimate(
+            machine_id=b.get("machine_id", ""),
+            component=b.get("component", ""),
+            bore_diameter=float(b["bore_diameter"]),
+            outer_diameter=float(b["outer_diameter"]),
+            width=float(b["width"]),
+            dynamic_load_rating=float(b["dynamic_load_rating"]),
+            static_load_rating=float(b["static_load_rating"]),
+            limiting_speed=float(b["limiting_speed"]),
+            radial_load=float(b.get("radial_load", 0.0)),
+            axial_load=float(b.get("axial_load", 0.0)),
+            speed=float(b.get("speed", 0.0)),
+            elapsed_operating_hours=float(b.get("elapsed_operating_hours", 0.0)),
+            temperature_change=float(b.get("temperature_change", 0.0)),
+            bearing_type=b.get("bearing_type", "ball"),
+        )
+        bearings.append(rec)
+
+    shafts = []
+    for s in spec.get("shafts", []) or []:
+        rec = ShaftFatigueAccumulator().accumulate(
+            machine_id=s.get("machine_id", ""),
+            component=s.get("component", ""),
+            ultimate_tensile_strength=float(s["ultimate_tensile_strength"]),
+            yield_strength=float(s["yield_strength"]),
+            stress_blocks=[tuple(b) for b in s.get("stress_blocks", []) or []],
+            frequency=float(s.get("frequency", 0.0)),
+            load_type=s.get("load_type", "bending"),
+        )
+        shafts.append(rec)
+
+    schedule = MaintenanceScheduler().schedule(
+        bearings=bearings,
+        shafts=shafts,
+        horizon_hours=float(spec.get("horizon_hours", 8760.0)),
+    )
+
+    print()
+    print("  Predictive Maintenance Schedule")
+    print("  " + "=" * 56)
+    print(f"  Horizon:        {schedule.horizon_hours:.0f} h")
+    print(f"  Bearings:       {len(bearings)}")
+    print(f"  Shafts:         {len(shafts)}")
+    print(f"  Actions:        {len(schedule.actions)}")
+    print()
+    if not schedule.actions:
+        print("  No actions required within the planning horizon.")
+    for a in schedule.actions:
+        print(
+            f"    [{a.severity:>8s}] {a.action:>8s}  "
+            f"{a.machine_id}/{a.component}  "
+            f"in {a.due_in_hours:6.0f} h  "
+            f"({a.component_type})"
+        )
+    if schedule.warnings:
+        print()
+        print("  Warnings:")
+        for w in schedule.warnings:
+            print(f"    - {w}")
+    print()
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI: economics commands
 # ---------------------------------------------------------------------------
@@ -1376,6 +1484,9 @@ def main() -> int:
     opt_p.add_argument("--mutation", type=float, default=0.2, help="Mutation rate")
     opt_p.add_argument("--crossover", type=float, default=0.8, help="Crossover rate")
     opt_p.add_argument("--seed", type=int, default=None, help="Random seed")
+    pm_p = factory_sub.add_parser("predict-maintenance",
+                                  help="Run predictive maintenance analysis (Phase 16.3)")
+    pm_p.add_argument("--spec", required=True, help="Path to a JSON spec")
 
     # economics
     econ_p = subparsers.add_parser("economics", help="Economic engineering commands")
@@ -1506,6 +1617,7 @@ def main() -> int:
             "simulate": cmd_factory_simulate,
             "layout": cmd_factory_layout,
             "optimize": cmd_factory_optimize,
+            "predict-maintenance": cmd_factory_predict_maintenance,
         }
         return factory_map.get(args.factory_cmd, lambda a: print("Unknown factory command"))(args)
     elif args.command == "economics":
