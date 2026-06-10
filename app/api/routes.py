@@ -403,14 +403,42 @@ async def ingest_drawing_and_build(
     ``"1"``. Below the confidence floor the orchestrator is not
     called even when both opt-ins are set, per spec §7.3.
 
-    Governance: this route never promotes a champion. The
-    orchestrator is called with ``auto_promote=False`` so the
-    promotion block is skipped entirely. Champion lineage
-    remains under explicit engineering lifecycle control.
+    Phase 17.3 (task #31) refactor: the route
+    now uses the intent_adapter to build a
+    ``RevisionIntent`` with
+    ``intent_source=AUTO_BUILD`` and
+    ``review_state=APPROVED`` when all three
+    gates pass. The intent's
+    ``commit_requested`` field carries the
+    gate-pass signal: True if all three gates
+    passed, False otherwise.
+
+    The orchestrator is called with
+    ``auto_promote=True`` (the gate's verdict
+    is the authority) and the
+    ``revision_intent`` kwarg. The promotion
+    decision is made by the promotion_gate;
+    the route does not bypass the gate.
+
+    Governance invariant: this route is the
+    AUTO_BUILD path. The intent_source=
+    AUTO_BUILD distinguishes it from the
+    EXPLICIT_COMMIT path (the /commit route,
+    task #38). Both paths funnel through the
+    same gate; the gate's verdict is
+    authoritative for both.
     """
     import hashlib
     from app.vision.constants import CONFIDENCE_FLOOR
     from app.vision.upload_validation import validate_and_stage_upload
+    from app.vision.ingestion_store import IngestionStore
+    from app.vision.review_store import ReviewStore
+    from app.vision.review_state import ReviewState
+    from app.vision.intent_adapter import (
+        IntentRequestContext,
+        IntentRequestKind,
+        build_intent,
+    )
 
     staged = await validate_and_stage_upload(request, file)
     tmp_path = staged.tmp_path
@@ -442,8 +470,40 @@ async def ingest_drawing_and_build(
                 f"{result.confidence:.3f} < {CONFIDENCE_FLOOR}"
             )
 
+        # ----- Issue an ingestion_id and persist a snapshot ----
+        # The ingestion_id is the join key that links
+        # this ingestion to its review state, patches,
+        # and (if committed) terminal COMMIT record.
+        # The /approve and /commit routes consume from
+        # the same IngestionStore.
+        ingestion_id = f"ing_{uuid.uuid4().hex[:12]}"
+        graph_dict = result.graph.to_dict()
+        graph_bytes = json.dumps(
+            graph_dict, sort_keys=True, default=str,
+        ).encode("utf-8")
+        graph_hash = "sha256:" + hashlib.sha256(
+            graph_bytes
+        ).hexdigest()
+        IngestionStore().write_snapshot(
+            ingestion_id,
+            source_file=source_file,
+            machine_name=result.graph.name,
+            graph=graph_dict,
+            bom_rows=list(result.bom_rows),
+            dimensions=[d.to_dict() if hasattr(d, "to_dict") else d
+                        for d in result.dimensions],
+            yaml_config=result.yaml_config,
+            title_block=result.title_block,
+            confidence=result.confidence,
+            ocr_confidence=result.confidence,
+            graph_hash=graph_hash,
+            warnings=list(warnings),
+        )
+
         base_response: Dict[str, Any] = {
             "status": "ok",
+            "ingestion_id": ingestion_id,
+            "graph_hash": graph_hash,
             "machine_name": result.graph.name,
             "revision": result.graph.revision,
             "confidence": result.confidence,
@@ -453,7 +513,7 @@ async def ingest_drawing_and_build(
             "bom_rows": result.bom_rows,
             "dimensions_found": len(result.dimensions),
             "yaml_config": result.yaml_config,
-            "graph": result.graph.to_dict(),
+            "graph": graph_dict,
             "warnings": warnings,
         }
 
@@ -498,25 +558,34 @@ async def ingest_drawing_and_build(
             base_response["status"] = "rejected"
             return base_response
 
-        # ----- All gates passed: project graph and run -------
-        # The graph hash is a stable identifier for the
-        # IngestionResult. The dict is sorted at every
-        # level so the hash is independent of dict key
-        # order, which Python does not guarantee. The
-        # manifest records this so the lineage is
-        # traceable end-to-end (spec §5.2 auditability).
-        graph_dict = result.graph.to_dict()
-        graph_bytes = json.dumps(
-            graph_dict, sort_keys=True, default=str,
-        ).encode("utf-8")
-        graph_hash = "sha256:" + hashlib.sha256(
-            graph_bytes
-        ).hexdigest()
+        # ----- All gates passed: build intent, run, transition ----
+        # The route acts as an implicit approver: when
+        # all three gates pass, the review state
+        # transitions to APPROVED on the ingestion.
+        # The intent is built with
+        # intent_source=AUTO_BUILD and
+        # review_state=APPROVED. The promotion_gate
+        # will return True; the orchestrator's
+        # promotion is gated on the score.
+        review_store = ReviewStore()
+        review_store.transition(
+            ingestion_id,
+            to_state=ReviewState.PENDING_REVIEW,
+            actor="auto_build_route",
+            reason="AUTO_BUILD three-gate pass.",
+        )
+        review_store.transition(
+            ingestion_id,
+            to_state=ReviewState.APPROVED,
+            actor="auto_build_route",
+            reason="AUTO_BUILD three-gate pass.",
+        )
 
         ingestion_path = {
             "source_file": source_file,
             "ocr_confidence": result.confidence,
             "graph_hash": graph_hash,
+            "ingestion_id": ingestion_id,
         }
 
         # Project the MachineGraph into the orchestrator's
@@ -527,31 +596,87 @@ async def ingest_drawing_and_build(
             result.graph, result.bom_rows,
         )
 
-        # The orchestrator runs with auto_promote=False.
-        # That flag is the governance guarantee: drawing-
-        # ingested builds are constitutionally incapable of
-        # promoting a champion (Commit 3a.5).
+        # Build the RevisionIntent via the intent_adapter.
+        # The adapter is the only legitimate constructor
+        # of RevisionIntent. The intent carries:
+        # - intent_source=AUTO_BUILD (this route's identity)
+        # - review_state=APPROVED (the gates passed)
+        # - commit_requested=True (the gates are a
+        #   sufficient signal of operator intent;
+        #   the route is opt-in by design)
+        # - ingestion_id (the snapshot we just wrote)
+        intent = build_intent(IntentRequestContext(
+            request_kind=IntentRequestKind.AUTO_BUILD,
+            commit_requested=True,
+            review_state=ReviewState.APPROVED,
+            ingestion_id=ingestion_id,
+            actor="auto_build_route",
+        ))
+
+        # The orchestrator runs with auto_promote=True.
+        # The promotion_gate's verdict is the
+        # authority: it will return True because the
+        # intent has intent_source=AUTO_BUILD,
+        # review_state=APPROVED, and
+        # commit_requested=True. The orchestrator's
+        # promotion block runs; the actual promotion
+        # is gated on the score by the pre-existing
+        # should_promote check.
         orchestrator = _get_orchestrator()
         run_result = orchestrator.run_machine_job(
             machine_name=result.graph.name,
             config=config,
             ingestion_path=ingestion_path,
-            auto_promote=False,
+            auto_promote=True,
+            revision_intent=intent,
         )
 
+        # If the build completed without a
+        # rejected_by_governance outcome, write the
+        # terminal COMMIT record and transition the
+        # review state to PROMOTED. The "disabled"
+        # mode is no longer the by-construction
+        # outcome (auto_promote=True + valid intent
+        # means the gate returns True).
+        promotion_mode = run_result.get("promotion_mode")
+        if promotion_mode != "rejected_by_governance":
+            IngestionStore().write_commit(
+                ingestion_id,
+                revision_id=run_result.get("revision_id"),
+                orchestrator_result={
+                    "score": run_result.get("score"),
+                    "promoted": run_result.get("promoted"),
+                    "promotion_mode": promotion_mode,
+                    "directory": run_result.get("directory"),
+                },
+            )
+            try:
+                review_store.transition(
+                    ingestion_id,
+                    to_state=ReviewState.PROMOTED,
+                    actor="auto_build_route",
+                    reason="AUTO_BUILD commit on gate pass.",
+                )
+            except Exception as exc:
+                logger.error(
+                    "AUTO_BUILD: state transition to PROMOTED "
+                    "failed: %s", exc,
+                )
+
         # Surface the orchestrator's response alongside the
-        # IngestionResult. ``promotion_mode`` is "disabled"
-        # by construction (auto_promote=False). The
-        # response is the union of the 17.1 IngestionResult
-        # shape and the orchestrator's result dict.
-        base_response["committed"] = True
+        # IngestionResult. The response is the union of
+        # the 17.1 IngestionResult shape and the
+        # orchestrator's result dict.
+        base_response["committed"] = (
+            promotion_mode != "rejected_by_governance"
+        )
         base_response["commit_skipped"] = None
         base_response["orchestrator_result"] = {
             "revision_id": run_result.get("revision_id"),
             "directory": run_result.get("directory"),
             "score": run_result.get("score"),
             "promoted": run_result.get("promoted"),
-            "promotion_mode": run_result.get("promotion_mode"),
+            "promotion_mode": promotion_mode,
             "parent_info": run_result.get("parent_info"),
         }
         base_response["ingestion_path"] = ingestion_path

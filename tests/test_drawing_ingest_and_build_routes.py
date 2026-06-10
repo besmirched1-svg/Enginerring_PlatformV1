@@ -404,16 +404,37 @@ class TestOptInGates:
 class TestOrchestratorCall:
     """When all gates pass, the orchestrator is called exactly
     once with the right kwargs. The governance guarantee
-    (``auto_promote=False``) is pinned here so a future
-    refactor cannot accidentally lift the safety net."""
+    is now via the promotion_gate: the route passes
+    auto_promote=True AND a RevisionIntent with
+    intent_source=AUTO_BUILD and review_state=APPROVED.
+    The gate's verdict is the authority; the orchestrator
+    is consulted via its own copy of the gate.
+    """
 
-    def test_orchestrator_called_with_auto_promote_false(
+    def test_orchestrator_called_with_auto_promote_true_and_auto_build_intent(
         self, client, monkeypatch,
     ):
-        """The orchestrator must be called with
-        ``auto_promote=False`` — that flag is the governance
-        guarantee. Champion lineage must remain under
-        explicit engineering control."""
+        """Phase 17.3 (task #31) refactor: the route
+        now passes ``auto_promote=True`` and a
+        ``RevisionIntent`` with
+        ``intent_source=AUTO_BUILD`` and
+        ``review_state=APPROVED``.
+
+        The pre-17.3 behavior was: ``auto_promote=False``
+        was the governance guarantee (drawing-ingested
+        builds were constitutionally incapable of
+        promoting a champion). The 17.3 design
+        discipline says: the promotion_gate is the
+        single enforcement boundary. The route
+        passes a valid intent; the gate's verdict
+        is the authority. The orchestrator is
+        consulted via its own copy of the gate.
+
+        This test pins the new contract: the kwargs
+        include ``auto_promote=True`` and a
+        RevisionIntent with the documented
+        intent_source/review_state/commit_requested.
+        """
         monkeypatch.setenv("DRAWING_AUTO_BUILD_ENABLED", "1")
         with patch(
             "app.api.routes._get_orchestrator"
@@ -437,10 +458,22 @@ class TestOrchestratorCall:
         call_kwargs = (
             mock_orch.run_machine_job.call_args.kwargs
         )
-        assert call_kwargs.get("auto_promote") is False, (
-            "Governance violation: drawing-ingested build "
-            "must call the orchestrator with auto_promote=False"
+        # The new contract: auto_promote=True
+        # (the gate is the authority, not the
+        # boolean).
+        assert call_kwargs.get("auto_promote") is True, (
+            "Phase 17.3 refactor: the route must call "
+            "the orchestrator with auto_promote=True "
+            "and a RevisionIntent. The gate's verdict "
+            "is the authority."
         )
+        # The RevisionIntent must be AUTO_BUILD +
+        # APPROVED + commit_requested=True.
+        assert "revision_intent" in call_kwargs
+        intent = call_kwargs["revision_intent"]
+        assert intent.intent_source.value == "auto_build"
+        assert intent.review_state.value == "approved"
+        assert intent.commit_requested is True
 
     def test_orchestrator_never_calls_set_new_champion(
         self, client, monkeypatch,
@@ -815,16 +848,29 @@ class TestResponseShape:
 class TestGovernanceStatement:
     """The governance statement is enforced at three layers:
     the spec, the route, and the orchestrator. This test
-    pins the route's compliance: the orchestrator is only
-    ever called with auto_promote=False from this route."""
+    pins the route's compliance with the 17.3 design
+    discipline: the orchestrator is called with
+    auto_promote=True AND a RevisionIntent with
+    intent_source=AUTO_BUILD and review_state=APPROVED.
+    The promotion_gate is the authority; the route does
+    not bypass the gate."""
 
-    def test_route_always_passes_auto_promote_false(
+    def test_route_always_passes_auto_build_intent(
         self, client, monkeypatch,
     ):
-        """Across commit=true + env-var-on, the route must
-        always pass auto_promote=False. If a future commit
-        changes this, the governance guarantee is broken
-        and the test fails."""
+        """Across commit=true + env-var-on, the route
+        must always pass auto_promote=True AND a
+        RevisionIntent with intent_source=AUTO_BUILD
+        and review_state=APPROVED. If a future commit
+        changes this, the governance guarantee is
+        broken and the test fails.
+
+        The pre-17.3 behavior was: auto_promote=False
+        was the governance guarantee. The 17.3 design
+        discipline replaces that with the gate: the
+        route passes a valid intent; the gate is the
+        authority.
+        """
         monkeypatch.setenv("DRAWING_AUTO_BUILD_ENABLED", "1")
         for confidence in (0.4, 0.6, 0.85, 0.99):
             with patch(
@@ -849,7 +895,212 @@ class TestGovernanceStatement:
             call_kwargs = (
                 mock_orch.run_machine_job.call_args.kwargs
             )
-            assert call_kwargs.get("auto_promote") is False, (
-                f"Governance violation at confidence={confidence}: "
-                f"auto_promote must always be False from this route"
+            assert call_kwargs.get("auto_promote") is True, (
+                f"Phase 17.3 governance violation at "
+                f"confidence={confidence}: auto_promote must "
+                f"be True; the gate's verdict is the authority."
             )
+            intent = call_kwargs.get("revision_intent")
+            assert intent is not None, (
+                f"Phase 17.3 governance violation at "
+                f"confidence={confidence}: the route must "
+                f"pass a RevisionIntent to the orchestrator."
+            )
+            assert intent.intent_source.value == "auto_build", (
+                f"Phase 17.3 governance violation at "
+                f"confidence={confidence}: intent_source must "
+                f"be AUTO_BUILD for this route."
+            )
+            assert intent.review_state.value == "approved", (
+                f"Phase 17.3 governance violation at "
+                f"confidence={confidence}: review_state must "
+                f"be APPROVED when the three gates pass."
+            )
+            assert intent.commit_requested is True, (
+                f"Phase 17.3 governance violation at "
+                f"confidence={confidence}: commit_requested "
+                f"must be True when the three gates pass."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 17.3 — task #31: AUTO_BUILD intent refactor
+# ---------------------------------------------------------------------------
+
+
+class TestAutoBuildIntentRefactor:
+    """Phase 17.3 (task #31) refactored the
+    /api/drawing/ingest-and-build route to use
+    the intent_adapter. The new contract:
+
+    - The route issues an ingestion_id and writes
+      a snapshot to the IngestionStore.
+    - When all three gates pass, the route
+      transitions the review state to APPROVED
+      (acting as an implicit approver).
+    - The route builds a RevisionIntent via
+      the intent_adapter with
+      intent_source=AUTO_BUILD and
+      review_state=APPROVED.
+    - The orchestrator is called with
+      auto_promote=True and the intent.
+    - On a non-rejected_by_governance outcome,
+      the route writes a terminal COMMIT record
+      and transitions the state to PROMOTED.
+
+    These tests pin the new flow at the boundary
+    that the existing tests do not exercise.
+    """
+
+    def test_route_returns_ingestion_id_in_response(
+        self, client, monkeypatch,
+    ):
+        """The /api/drawing/ingest-and-build
+        response carries the ingestion_id (so
+        the operator can /approve or /commit it
+        via the dedicated routes)."""
+        monkeypatch.setenv("DRAWING_AUTO_BUILD_ENABLED", "1")
+        with patch(
+            "app.api.routes._get_orchestrator"
+        ) as mock_get_orch, patch(
+            "app.vision.drawing_ingestor.ingest",
+            return_value=_make_result(confidence=0.9),
+        ):
+            mock_orch = MagicMock()
+            mock_orch.run_machine_job.return_value = (
+                _mock_orchestrator_result()
+            )
+            mock_get_orch.return_value = mock_orch
+            r = client.post(
+                "/api/drawing/ingest-and-build?commit=true",
+                files={"file": ("hopper.pdf",
+                                io.BytesIO(b"%PDF-1.4\n"),
+                                "application/pdf")},
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert "ingestion_id" in body
+        assert body["ingestion_id"].startswith("ing_")
+        assert "graph_hash" in body
+        assert body["graph_hash"].startswith("sha256:")
+
+    def test_route_writes_commit_record_on_success(
+        self, client, monkeypatch, tmp_path,
+    ):
+        """When all three gates pass AND the
+        gate's verdict is not
+        rejected_by_governance, the route writes
+        a terminal COMMIT record to the
+        IngestionStore."""
+        monkeypatch.setenv("DRAWING_AUTO_BUILD_ENABLED", "1")
+        monkeypatch.chdir(tmp_path)
+        with patch(
+            "app.api.routes._get_orchestrator"
+        ) as mock_get_orch, patch(
+            "app.vision.drawing_ingestor.ingest",
+            return_value=_make_result(confidence=0.9),
+        ):
+            mock_orch = MagicMock()
+            mock_orch.run_machine_job.return_value = (
+                _mock_orchestrator_result()
+            )
+            mock_get_orch.return_value = mock_orch
+            r = client.post(
+                "/api/drawing/ingest-and-build?commit=true",
+                files={"file": ("hopper.pdf",
+                                io.BytesIO(b"%PDF-1.4\n"),
+                                "application/pdf")},
+            )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        ingestion_id = body["ingestion_id"]
+        # The IngestionStore has a terminal COMMIT
+        # record for this ingestion_id.
+        from app.vision.ingestion_store import IngestionStore
+        assert IngestionStore().has_commit(ingestion_id)
+
+    def test_route_transitions_state_to_promoted_on_success(
+        self, client, monkeypatch, tmp_path,
+    ):
+        """When the gate authorizes the build,
+        the route transitions the review state
+        from APPROVED to PROMOTED (the AUTO_BUILD
+        path is a single-step approval+commit
+        when all gates pass)."""
+        monkeypatch.setenv("DRAWING_AUTO_BUILD_ENABLED", "1")
+        monkeypatch.chdir(tmp_path)
+        with patch(
+            "app.api.routes._get_orchestrator"
+        ) as mock_get_orch, patch(
+            "app.vision.drawing_ingestor.ingest",
+            return_value=_make_result(confidence=0.9),
+        ):
+            mock_orch = MagicMock()
+            mock_orch.run_machine_job.return_value = (
+                _mock_orchestrator_result()
+            )
+            mock_get_orch.return_value = mock_orch
+            r = client.post(
+                "/api/drawing/ingest-and-build?commit=true",
+                files={"file": ("hopper.pdf",
+                                io.BytesIO(b"%PDF-1.4\n"),
+                                "application/pdf")},
+            )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        ingestion_id = body["ingestion_id"]
+        from app.vision.review_store import ReviewStore
+        from app.vision.review_state import ReviewState
+        assert (
+            ReviewStore().read_current_state(ingestion_id)
+            == ReviewState.PROMOTED
+        )
+
+    def test_route_does_not_promote_on_rejected_by_governance(
+        self, client, monkeypatch, tmp_path,
+    ):
+        """If the gate returned
+        rejected_by_governance (defense in depth
+        — the route's pre-check and the gate
+        should agree), the route does NOT write
+        a COMMIT record and does NOT transition
+        the state to PROMOTED."""
+        monkeypatch.setenv("DRAWING_AUTO_BUILD_ENABLED", "1")
+        monkeypatch.chdir(tmp_path)
+        with patch(
+            "app.api.routes._get_orchestrator"
+        ) as mock_get_orch, patch(
+            "app.vision.drawing_ingestor.ingest",
+            return_value=_make_result(confidence=0.9),
+        ):
+            mock_orch = MagicMock()
+            mock_orch.run_machine_job.return_value = {
+                "revision_id": "rev_rbg",
+                "score": 0.0,
+                "promoted": False,
+                "promotion_mode": "rejected_by_governance",
+                "directory": "outputs/revisions/x/rev_rbg",
+                "parent_info": None,
+            }
+            mock_get_orch.return_value = mock_orch
+            r = client.post(
+                "/api/drawing/ingest-and-build?commit=true",
+                files={"file": ("hopper.pdf",
+                                io.BytesIO(b"%PDF-1.4\n"),
+                                "application/pdf")},
+            )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        ingestion_id = body["ingestion_id"]
+        # No COMMIT record.
+        from app.vision.ingestion_store import IngestionStore
+        assert not IngestionStore().has_commit(ingestion_id)
+        # State is APPROVED (not PROMOTED); the
+        # operator can re-attempt /commit if the
+        # underlying issue is resolved.
+        from app.vision.review_store import ReviewStore
+        from app.vision.review_state import ReviewState
+        assert (
+            ReviewStore().read_current_state(ingestion_id)
+            == ReviewState.APPROVED
+        )
