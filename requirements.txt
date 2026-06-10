@@ -9,6 +9,7 @@ requests
 redis[hiredis]
 rq
 pyyaml
+numpy
 # Vision pipeline (optional — install for drawing ingestion)
 # pdfplumber
 # pytesseract

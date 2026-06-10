@@ -64,12 +64,27 @@ def _resolve_targets(scad_path: Path, output_dir: Optional[Path] = None) -> tupl
     )
 
 
+def _wrap_with_xvfb(cmd: list[str]) -> list[str]:
+    """Wrap an OpenSCAD command with ``xvfb-run -a`` when requested.
+
+    OpenSCAD's PNG export needs an OpenGL context, which on a
+    headless server requires a virtual framebuffer. STL/SVG/DXF
+    don't, so we only wrap when ``OPENSCAD_USE_XVFB=1`` is set in
+    the environment. The Docker image sets this; dev machines with
+    a real X server leave it unset.
+    """
+    if os.getenv("OPENSCAD_USE_XVFB") == "1":
+        return ["xvfb-run", "-a"] + cmd
+    return cmd
+
+
 def _run_openscad(cmd: list[str], timeout: int) -> None:
     """
     Invoke OpenSCAD with captured stdout/stderr so diagnostics make it into
     the log on failure. Raises RuntimeError on non-zero exit so callers see
     the actual SCAD compiler error rather than a bare CalledProcessError.
     """
+    cmd = _wrap_with_xvfb(cmd)
     try:
         result = subprocess.run(
             cmd,

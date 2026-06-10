@@ -106,19 +106,7 @@ services:
   # (Optional) Backups service — runs scheduled backups
   backup:
     build: .
-    command: python -c "
-import time, os
-from app.runtime.backup import BackupManager
-from app.runtime.config_loader import load_config
-cfg = load_config(profile='prod')
-bm = BackupManager(os.path.join(cfg.data_dir, 'backups'))
-bm.add_source('config', 'config')
-bm.add_source('knowledge', os.path.join(cfg.data_dir, 'knowledge'))
-bm.add_source('telemetry', os.path.join(cfg.data_dir, 'telemetry'))
-while True:
-    bm.create_backup(label='daily')
-    time.sleep(86400)
-"
+    command: python /app/scripts/backup_scheduler.py
     environment:
       <<: *common-env
     <<: *depends-redis
