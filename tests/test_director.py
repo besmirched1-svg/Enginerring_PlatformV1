@@ -191,3 +191,139 @@ def test_director_stage_log_populated():
     result = director.run(goal)
     assert len(result.stage_log) >= 1
     assert result.stage_log[0]["stage"] == DesignStage.PLANNING.value
+
+
+# ---------------------------------------------------------------------------
+# Phase 15: closed-loop constraint adaptation
+# ---------------------------------------------------------------------------
+
+import os
+import tempfile
+
+from app.director.models import (
+    DynamicConstraint,
+    apply_dynamic_constraint,
+)
+from app.director.engineer import (
+    adapt_goal_with_lessons,
+    watch_for_lessons,
+)
+from app.knowledge.store import DesignMemoryStore
+
+
+def _seed_lesson(store, **kwargs):
+    """Append one lesson record to a temp store and return the store path."""
+    store._append({"record_type": "qa_measurement", "passed": False, **kwargs})
+
+
+def test_dynamic_constraint_apply_creates_dict_path():
+    g = EngineeringGoal(prompt="t", machine_type="hemp_roller",
+                        constraints={"spindle": {"shaft_od": 260}})
+    dc = DynamicConstraint(
+        constraint_id="dc_x", machine_type="hemp_roller",
+        parameter="spindle.shaft_od", operator="min", value=300.0,
+        source_lesson="x", severity="critical",
+    )
+    new_g = apply_dynamic_constraint(g, dc)
+    assert new_g.constraints["spindle"]["shaft_od"]["op"] == "min"
+    assert new_g.constraints["spindle"]["shaft_od"]["value"] == 300.0
+    # original not mutated
+    assert g.constraints["spindle"]["shaft_od"] == 260
+
+
+def test_watch_for_lessons_is_idempotent_across_processes():
+    """Calling watch_for_lessons twice with the same store must not re-emit."""
+    tmpdir = tempfile.mkdtemp()
+    store_path = os.path.join(tmpdir, "memory.ndjson")
+    store = DesignMemoryStore(store_path=store_path)
+    _seed_lesson(store, machine_name="hemp_roller",
+                 lesson="QA shaft_od critical deviation: 240 vs 260",
+                 metric="shaft_od",
+                 nominal=260.0, actual=240.0, tolerance=5.0,
+                 severity="critical")
+
+    first = watch_for_lessons(knowledge_store=store, machine_type="hemp_roller")
+    assert len(first) == 1
+    assert first[0].parameter == "spindle.shaft_od"
+    assert first[0].applied is True
+    assert first[0].applied_at != ""
+
+    # Second call: same store on disk -> must not re-derive
+    store2 = DesignMemoryStore(store_path=store_path)
+    second = watch_for_lessons(knowledge_store=store2, machine_type="hemp_roller")
+    assert second == [], f"expected no re-emission, got {second}"
+
+    # The marker record is itself part of the store
+    markers = store2.query(record_type="dynamic_constraint", limit=10)
+    assert len(markers) == 1
+    assert markers[0]["parameter"] == "spindle.shaft_od"
+    assert markers[0]["constraint_id"] == first[0].constraint_id
+
+
+def test_watch_for_lessons_chooses_operator_from_qa_data():
+    """actual > nominal -> max; actual < nominal -> min."""
+    tmpdir = tempfile.mkdtemp()
+    store = DesignMemoryStore(store_path=os.path.join(tmpdir, "m.ndjson"))
+
+    # actual < nominal -> min
+    _seed_lesson(store, machine_name="hemp_roller",
+                 lesson="shaft_od undersize", metric="shaft_od",
+                 nominal=260.0, actual=240.0, tolerance=5.0,
+                 severity="critical")
+    constraints = watch_for_lessons(knowledge_store=store, machine_type="hemp_roller")
+    assert len(constraints) == 1
+    assert constraints[0].operator == "min"
+    assert constraints[0].value == 240.0  # actual value, not the deviation_pct
+
+
+def test_adapt_goal_with_lessons_returns_new_goal_with_constraints():
+    tmpdir = tempfile.mkdtemp()
+    store = DesignMemoryStore(store_path=os.path.join(tmpdir, "m.ndjson"))
+    _seed_lesson(store, machine_name="hemp_roller",
+                 lesson="drum wall_thickness below limit",
+                 metric="wall_thickness",
+                 nominal=8.0, actual=4.0, tolerance=1.0,
+                 severity="high")
+
+    g = EngineeringGoal(prompt="t", machine_type="hemp_roller")
+    new_g, applied = adapt_goal_with_lessons(g, knowledge_store=store)
+    assert len(applied) == 1
+    assert new_g.constraints["drum"]["wall_thickness"]["value"] == 4.0
+    # The original goal is untouched
+    assert g.constraints == {}
+
+
+def test_watch_for_lessons_ignores_unrelated_record_types():
+    tmpdir = tempfile.mkdtemp()
+    store = DesignMemoryStore(store_path=os.path.join(tmpdir, "m.ndjson"))
+    store._append({
+        "record_type": "promotion", "machine_name": "hemp_roller",
+        "lesson": "shaft_od mentioned but record type does not qualify",
+    })
+    out = watch_for_lessons(knowledge_store=store, machine_type="hemp_roller")
+    assert out == []
+
+
+def test_watch_for_lessons_skips_lesson_without_keyword():
+    tmpdir = tempfile.mkdtemp()
+    store = DesignMemoryStore(store_path=os.path.join(tmpdir, "m.ndjson"))
+    _seed_lesson(store, machine_name="hemp_roller",
+                 lesson="paint finish dull on left bracket",
+                 metric="finish", nominal=1.0, actual=0.5, tolerance=0.1)
+    out = watch_for_lessons(knowledge_store=store, machine_type="hemp_roller")
+    assert out == []
+
+
+def test_watch_for_lessions_handles_drum_wall_keyword():
+    """A separate keyword (drum_wall) maps to the same parameter as
+    wall_thickness; both should derive a constraint."""
+    tmpdir = tempfile.mkdtemp()
+    store = DesignMemoryStore(store_path=os.path.join(tmpdir, "m.ndjson"))
+    _seed_lesson(store, machine_name="hemp_roller",
+                 lesson="drum_wall too thin causing rupture",
+                 metric="drum_wall",
+                 nominal=8.0, actual=4.0, tolerance=1.0,
+                 severity="high")
+    out = watch_for_lessons(knowledge_store=store, machine_type="hemp_roller")
+    assert len(out) == 1
+    assert out[0].parameter == "drum.wall_thickness"

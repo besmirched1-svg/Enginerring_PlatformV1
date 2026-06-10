@@ -762,6 +762,9 @@ class EngineerDirector:
 
 # Keywords the FeedbackTrigger / KnowledgeReasoner may surface, mapped to
 # the constraint parameter path and the operation we want to enforce.
+# The default operation is used when the lesson does not itself indicate
+# direction; lessons that include a numeric actual vs. nominal can flip
+# the operator at derivation time (see _derive_constraint_from_lesson).
 _LESSON_KEYWORD_MAP = {
     "shaft_od": ("spindle.shaft_od", "min"),
     "wall_thickness": ("drum.wall_thickness", "min"),
@@ -772,10 +775,44 @@ _LESSON_KEYWORD_MAP = {
 }
 
 
+def _extract_deviation_value(lesson: Dict[str, Any]) -> tuple[float, Optional[float], Optional[float]]:
+    """Pull a (value, nominal, actual) triple out of a lesson dict.
+
+    Looks for any of: explicit ``value`` field, ``actual`` + ``nominal`` pair
+    (typical for QA records), or ``deviation_pct``. Returns (0.0, None, None)
+    if nothing numeric is present.
+    """
+    explicit = lesson.get("value")
+    if explicit is not None:
+        try:
+            return float(explicit), None, None
+        except (TypeError, ValueError):
+            pass
+    actual = lesson.get("actual")
+    nominal = lesson.get("nominal")
+    if actual is not None and nominal is not None:
+        try:
+            return float(actual), float(nominal), float(actual)
+        except (TypeError, ValueError):
+            pass
+    dev_pct = lesson.get("deviation_pct")
+    if dev_pct is not None:
+        try:
+            return float(dev_pct), None, None
+        except (TypeError, ValueError):
+            pass
+    return 0.0, None, None
+
+
 def _derive_constraint_from_lesson(lesson: Dict[str, Any]) -> Optional[DynamicConstraint]:
     """Build a DynamicConstraint from a knowledge-store lesson dict.
 
     Returns ``None`` if the lesson does not describe a measurable constraint.
+
+    For QA records (where we have actual + nominal), the operator is chosen
+    based on the sign of the deviation: actual > nominal -> ``max``,
+    actual < nominal -> ``min``. For telemetry / failure records we fall
+    back to the default operator declared in ``_LESSON_KEYWORD_MAP``.
     """
     import uuid
     from datetime import datetime, timezone
@@ -785,36 +822,80 @@ def _derive_constraint_from_lesson(lesson: Dict[str, Any]) -> Optional[DynamicCo
     ).lower()
     machine = str(lesson.get("machine_name") or lesson.get("machine_id") or "")
     severity = str(lesson.get("severity") or "normal")
-    for keyword, (param, op) in _LESSON_KEYWORD_MAP.items():
-        if keyword in text:
-            value = lesson.get("value") or lesson.get("deviation_pct") or 0.0
-            try:
-                value = float(value)
-            except (TypeError, ValueError):
-                value = 0.0
-            return DynamicConstraint(
-                constraint_id=f"dc_{uuid.uuid4().hex[:10]}",
-                machine_type=machine,
-                parameter=param,
-                operator=op,
-                value=value,
-                source_lesson=text[:200],
-                severity=severity,
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
+    value, nominal, actual = _extract_deviation_value(lesson)
+
+    for keyword, (param, default_op) in _LESSON_KEYWORD_MAP.items():
+        if keyword not in text:
+            continue
+        op = default_op
+        # QA / evaluation records with both actual and nominal let us pick
+        # the direction of the constraint from the data itself.
+        if actual is not None and nominal is not None and actual != nominal:
+            op = "max" if actual > nominal else "min"
+        return DynamicConstraint(
+            constraint_id=f"dc_{uuid.uuid4().hex[:10]}",
+            machine_type=machine,
+            parameter=param,
+            operator=op,
+            value=value,
+            source_lesson=text[:200],
+            severity=severity,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
     return None
+
+
+def _constraint_already_emitted(
+    store: Any, lesson_ts: str, lesson_text: str
+) -> bool:
+    """True if a ``dynamic_constraint`` record already covers this lesson."""
+    if not lesson_ts or not lesson_text:
+        return False
+    try:
+        for rec in store.query(record_type="dynamic_constraint", limit=500):
+            if rec.get("source_ts") == lesson_ts and rec.get("source_lesson") == lesson_text:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _record_emitted_constraint(
+    store: Any, lesson: Dict[str, Any], dc: DynamicConstraint
+) -> None:
+    """Persist a marker so we never re-derive this constraint from this lesson."""
+    try:
+        from datetime import datetime, timezone
+        store._append({
+            "record_type": "dynamic_constraint",
+            "constraint_id": dc.constraint_id,
+            "source_ts": lesson.get("ts", ""),
+            "source_lesson": (lesson.get("lesson") or "")[:200],
+            "machine_name": dc.machine_type,
+            "parameter": dc.parameter,
+            "operator": dc.operator,
+            "value": dc.value,
+            "severity": dc.severity,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        logger.warning("Failed to persist dynamic_constraint marker: %s", exc)
 
 
 def watch_for_lessons(
     knowledge_store: Any = None,
     machine_type: str = "",
     since_ts: str = "",
+    persist_emitted: bool = True,
 ) -> List[DynamicConstraint]:
     """Scan the knowledge store for new lessons and convert them to constraints.
 
-    A lesson becomes a constraint when it matches a known engineering
-    keyword. Records already converted are not re-emitted; this function is
-    idempotent within a process.
+    Idempotence: a lesson is only emitted once. The function checks the
+    knowledge store for a prior ``dynamic_constraint`` record matching the
+    same ``source_ts`` + ``source_lesson`` and skips re-derivation. Newly
+    derived constraints are themselves written back to the store (unless
+    ``persist_emitted=False``) so subsequent calls stay idempotent across
+    processes and restarts.
     """
     from app.knowledge.store import get_knowledge_store
 
@@ -829,9 +910,17 @@ def watch_for_lessons(
             "telemetry_feedback", "failure", "evaluation", "qa_measurement",
         ):
             continue
+        text = (rec.get("lesson") or rec.get("description") or "")[:200]
+        if _constraint_already_emitted(store, ts, text):
+            continue
         dc = _derive_constraint_from_lesson(rec)
         if dc is not None:
+            dc.applied = True
+            from datetime import datetime, timezone
+            dc.applied_at = datetime.now(timezone.utc).isoformat()
             out.append(dc)
+            if persist_emitted:
+                _record_emitted_constraint(store, rec, dc)
     return out
 
 
