@@ -4,6 +4,27 @@
 # This package produces manufacturing OUTPUT artifacts (G-code, documents,
 # plans, telemetry schemas). It does not drive machines or field hardware -
 # physical execution is a deliberate outward-facing opt-in.
+#
+# Layer rules
+# -----------
+# 1. This package must not contain engineering math. Formulas, lookups,
+#    and derivations belong in ``app/manufacturing/``. Production modules
+#    shape data (dataclasses, CSV text, G-code text, alarm-band default
+#    ratios) but never recompute a value that already lives in a
+#    manufacturing analyzer.
+# 2. This package must not be imported by ``app/manufacturing/``. The
+#    dependency is one-way: manufacturing types flow *into* production,
+#    not the other way around.
+# 3. ``app/director/`` may orchestrate both layers but must not duplicate
+#    logic from either. Wiring ``build_production_package()`` into
+#    ``engineer.py:run()`` is the natural bridge; until that is added,
+#    director + production are deliberately decoupled (outward-facing
+#    opt-in).
+#
+# These rules are validated by the Phase 15.5 architecture audit (see
+# ``docs/ARCHITECTURE.md``). The audit's only concrete cleanup was
+# moving ``ProductionCutListGenerator`` from ``app/manufacturing/cutlists.py``
+# to ``app/production/documents.py``.
 
 from __future__ import annotations
 

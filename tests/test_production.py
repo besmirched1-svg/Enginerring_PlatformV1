@@ -1,5 +1,8 @@
 """Tests for Autonomous Manufacturing & Deployment package (Phase 15)."""
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from app.production import (
@@ -11,6 +14,7 @@ from app.production import (
     CommissioningPlan,
     FieldTelemetrySchema,
     ProductionPackage,
+    ProductionCutListGenerator,
     generate_drilling_program,
     generate_profile_program,
     rectangle_points,
@@ -267,3 +271,89 @@ class TestProductionPackage:
         assert pkg.qa_plan is not None
         assert pkg.commissioning is not None
         assert pkg.telemetry is not None
+
+
+# ===================================================================
+# Phase 15.5: ProductionCutListGenerator on-disk generator
+# ===================================================================
+#
+# This class used to live in app/manufacturing/cutlists.py. The Phase 15.5
+# architecture audit moved it to app/production/documents.py because it
+# writes files to disk (a packaging concern) and the manufacturing layer
+# must remain analyzers + dataclasses only. These tests lock the move
+# in: the class must be importable from app.production, the manufacturing
+# module must not re-export it, and the on-disk output must match the
+# documented contract.
+
+class TestProductionCutListGenerator:
+    def test_lives_in_production_not_manufacturing(self):
+        from app.production import documents
+        from app.manufacturing import cutlists
+        assert hasattr(documents, "ProductionCutListGenerator")
+        assert not hasattr(cutlists, "ProductionCutListGenerator"), (
+            "ProductionCutListGenerator must not live in app.manufacturing"
+        )
+
+    def test_writes_csv_and_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "shop_floor"
+            parts = [
+                CutPart(part_id="panel_a", shape=PartShape.RECTANGLE,
+                        length_mm=800, width_mm=400, thickness_mm=6,
+                        quantity=2, material="mild_steel"),
+                CutPart(part_id="panel_b", shape=PartShape.RECTANGLE,
+                        length_mm=400, width_mm=400, thickness_mm=10,
+                        quantity=1, material="mild_steel"),
+            ]
+            gen = ProductionCutListGenerator()
+            paths = gen.generate(parts, job_id="JOB-001", output_dir=out_dir)
+
+            assert "csv" in paths and "summary" in paths
+            assert paths["csv"].exists()
+            assert paths["summary"].exists()
+            # CSV header and a known part id
+            csv_text = paths["csv"].read_text(encoding="utf-8")
+            assert "Part ID" in csv_text.splitlines()[0]
+            assert "panel_a" in csv_text
+            # Summary content
+            summary_text = paths["summary"].read_text(encoding="utf-8")
+            assert "JOB-001" in summary_text
+            assert "Total Parts" in summary_text
+            assert "Material Util" in summary_text
+
+    def test_creates_output_dir_if_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "nested" / "deeper"
+            assert not out_dir.exists()
+            parts = [
+                CutPart(part_id="x", shape=PartShape.RECTANGLE,
+                        length_mm=100, width_mm=100, thickness_mm=6,
+                        quantity=1),
+            ]
+            gen = ProductionCutListGenerator()
+            paths = gen.generate(parts, job_id="JOB-002", output_dir=out_dir)
+            assert paths["csv"].exists()
+            assert paths["summary"].exists()
+
+    def test_uses_supplied_analyzer(self):
+        """The generator should respect a caller-supplied analyzer with
+        a non-default config (e.g. plasma process)."""
+        from app.manufacturing.cutlists import CutListAnalyzer, CutListConfig
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            analyzer = CutListAnalyzer(CutListConfig(
+                process=__import__("app.manufacturing.cutlists",
+                                   fromlist=["CutProcess"]).CutProcess.PLASMA,
+                sheet_width_mm=2400, sheet_length_mm=1200,
+            ))
+            gen = ProductionCutListGenerator(analyzer=analyzer)
+            parts = [
+                CutPart(part_id="x", shape=PartShape.RECTANGLE,
+                        length_mm=100, width_mm=100, thickness_mm=6,
+                        quantity=1),
+            ]
+            paths = gen.generate(parts, job_id="JOB-003", output_dir=out_dir)
+            summary = paths["summary"].read_text(encoding="utf-8")
+            assert "plasma" in summary
+            assert "2400" in summary  # width appears in summary
+

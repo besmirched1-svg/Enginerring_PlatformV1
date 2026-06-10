@@ -4,6 +4,8 @@
 **Status**: Phase 7 Hardware Feedback Loop Complete — Telemetry → Digital Twin → Knowledge → Improvement  
 **Version**: v1.4.0 (Alpha)
 
+> **Architecture map** — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current dependency graph, layer rules, and the `manufacturing` ↔ `production` contract.
+
 ---
 
 ## System Architecture Overview

@@ -8,7 +8,11 @@ from .cnc import (
     rectangle_points,
 )
 from .commissioning import build_commissioning_plan
-from .documents import build_cutlist_document, build_weldmap_document
+from .documents import (
+    ProductionCutListGenerator,
+    build_cutlist_document,
+    build_weldmap_document,
+)
 from .field_telemetry import build_telemetry_schema
 from .models import (
     CommissioningPlan,
@@ -46,6 +50,7 @@ __all__ = [
     # documents
     "build_cutlist_document",
     "build_weldmap_document",
+    "ProductionCutListGenerator",
     # qa / commissioning / telemetry
     "build_qa_plan",
     "build_commissioning_plan",
