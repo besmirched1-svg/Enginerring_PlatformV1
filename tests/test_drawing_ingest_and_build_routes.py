@@ -122,12 +122,14 @@ class TestRouteRegistered:
     was added in this commit and was not later deleted
     silently."""
 
-    def test_method_a_route_count_is_58(self):
+    def test_method_a_route_count_is_59(self):
         """The route count was 55 pre-17.2a, became 56
         with the /api/drawing/ingest-and-build addition
         (Phase 17.2a), 57 with the /approve addition
-        (Phase 17.3, task #42), and is now 58 with
-        the /commit addition (Phase 17.3, task #38).
+        (Phase 17.3, task #42), 58 with the /commit
+        addition (Phase 17.3, task #38), and is now
+        59 with the PATCH /graph addition (Phase 17.3,
+        task #28).
 
         The count is the canary: a non-deliberate
         change to a route decorator (a typo, a
@@ -136,14 +138,14 @@ class TestRouteRegistered:
         """
         import re
         text = open("app/api/routes.py", "r", encoding="utf-8").read()
-        # Match the same shape `grep -E "^@router\\.(get|post|put|delete)"`.
+        # Match the same shape `grep -E "^@router\\.(get|post|put|delete|patch)"`.
         # We allow leading whitespace on the decorator line; the
         # source file does not indent module-level decorators.
         n = len(re.findall(
-            r"^@router\.(get|post|put|delete)\(", text, re.MULTILINE,
+            r"^@router\.(get|post|put|delete|patch)\(", text, re.MULTILINE,
         ))
-        assert n == 58, (
-            f"Method A route count drifted from 58; got {n}. "
+        assert n == 59, (
+            f"Method A route count drifted from 59; got {n}. "
             f"Adding/removing routes requires a deliberate change."
         )
 
@@ -217,6 +219,29 @@ class TestRouteRegistered:
         }
         assert (
             "POST", "/api/drawing/ingest/{ingestion_id}/commit"
+        ) in routes
+
+    def test_patch_graph_route_is_registered(self, client):
+        """The PATCH /api/drawing/ingest/{ingestion_id}/graph
+        route added in Phase 17.3 (task #28) must be
+        present in the FastAPI app's registered
+        routes.
+
+        This is the operator's edit endpoint: it
+        lets the operator correct OCR errors or add
+        missing dimensions before the ingestion is
+        approved. The PATCH is append-only; the
+        prior snapshot is preserved, the new graph
+        replaces the in-effect one.
+        """
+        routes = {
+            (next(iter(sorted(getattr(r, "methods", set()) or set()))),
+             getattr(r, "path", None))
+            for r in client.app.router.routes
+            if getattr(r, "methods", None)
+        }
+        assert (
+            "PATCH", "/api/drawing/ingest/{ingestion_id}/graph"
         ) in routes
 
 

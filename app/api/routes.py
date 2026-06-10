@@ -2916,3 +2916,147 @@ def commit_ingestion(
         "directory": run_result.get("directory"),
         "committed": True,
     }
+
+
+# =====================================================================
+# Phase 17.3 — PATCH /api/drawing/ingest/{ingestion_id}/graph
+# =====================================================================
+#
+# PATCH /api/drawing/ingest/{ingestion_id}/graph
+#     Body: { "edited_by": "<actor>",
+#             "graph": <new graph dict>,
+#             "edited_fields": ["<field>", ...],
+#             "note": "<optional string>" }
+#
+#     The operator's edit endpoint. The route lets
+#     the operator correct OCR errors, add missing
+#     dimensions, or fix title-block inconsistencies
+#     before the ingestion is approved. The PATCH
+#     is append-only: the prior snapshot is
+#     preserved, the new graph replaces the in-
+#     effect one.
+#
+#     PATCHes are not allowed on terminal-state
+#     ingestions. The review state machine's
+#     terminal states (REJECTED, PROMOTED) admit
+#     no further changes; an attempt to PATCH a
+#     terminal ingestion returns 409 Conflict.
+#
+#     The PATCH record carries:
+#
+#     - edited_by: who made the change
+#     - edited_fields: which fields changed
+#     - new_graph: the replacement graph
+#     - new_graph_hash: the deterministic hash of
+#       the new graph
+#     - note: optional human-readable explanation
+#
+#     The PATCH is layered on top of the snapshot;
+#     the IngestionStore's read_current() applies
+#     patches in order to compute the in-effect
+#     state. The /commit route reads from
+#     read_current(), so the operator's edits are
+#     reflected in the orchestrator's build.
+# =====================================================================
+
+
+class PatchGraphRequest(BaseModel):
+    """The body of the PATCH /graph route.
+
+    ``graph`` is the new graph dict (replaces
+    the in-effect graph). ``edited_fields`` is
+    a list of field names that changed; the
+    route does not validate this list against
+    the actual diff, but the list is recorded
+    for the audit trail. ``edited_by`` is the
+    operator's identity. ``note`` is optional.
+    """
+    edited_by: str
+    graph: Dict[str, Any]
+    edited_fields: List[str] = []
+    note: Optional[str] = None
+
+
+@router.patch("/drawing/ingest/{ingestion_id}/graph")
+def patch_ingestion_graph(
+    ingestion_id: str,
+    payload: PatchGraphRequest,
+):
+    """Apply a graph edit to the ingestion.
+
+    Returns 200 with the new graph_hash and
+    patch_count. Returns 404 if the ingestion
+    is unknown. Returns 409 if the ingestion
+    is in a terminal state (REJECTED, PROMOTED).
+    """
+    from app.vision.ingestion_store import IngestionStore
+    from app.vision.review_store import ReviewStore
+
+    ingestion_store = IngestionStore()
+
+    # 404 if the ingestion has never been written.
+    if ingestion_store.read_current(ingestion_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ingestion not found: {ingestion_id}",
+        )
+
+    # 409 if the ingestion is in a terminal state.
+    # The state machine's terminal states (REJECTED,
+    # PROMOTED) admit no further changes. The
+    # route layer reads from the ReviewStore (the
+    # state side, not the content side).
+    review_store = ReviewStore()
+    if review_store.has_terminal_state(ingestion_id):
+        from app.vision.review_state import ReviewState
+        current = review_store.read_current_state(ingestion_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "terminal_state",
+                "from_state": current.value,
+                "message": (
+                    f"Ingestion is in terminal state "
+                    f"{current.value!r}. PATCHes are not allowed "
+                    f"on terminal ingestions."
+                ),
+            },
+        )
+
+    # Compute the new graph_hash. The hash is the
+    # deterministic fingerprint of the graph
+    # content; it lets downstream code verify
+    # graph integrity.
+    import hashlib
+    graph_bytes = json.dumps(
+        payload.graph, sort_keys=True, default=str,
+    ).encode("utf-8")
+    new_graph_hash = "sha256:" + hashlib.sha256(
+        graph_bytes
+    ).hexdigest()
+
+    # Append the PATCH record. The IngestionStore's
+    # write_patch is append-only: the prior
+    # snapshot is preserved, the new graph is
+    # applied in order. The /commit route's
+    # read_current() will see the new graph as
+    # the in-effect state.
+    ingestion_store.write_patch(
+        ingestion_id,
+        edited_by=payload.edited_by,
+        edited_fields=payload.edited_fields,
+        new_graph=payload.graph,
+        new_graph_hash=new_graph_hash,
+        note=payload.note,
+    )
+
+    # Return the new state summary so the
+    # operator can verify the patch was applied.
+    current = ingestion_store.read_current(ingestion_id)
+    return {
+        "status": "ok",
+        "ingestion_id": ingestion_id,
+        "graph_hash": new_graph_hash,
+        "patch_count": current.get("patch_count", 0),
+        "edited_by": payload.edited_by,
+    }
