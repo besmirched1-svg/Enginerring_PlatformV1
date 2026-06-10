@@ -5,8 +5,8 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from app.cad.renderer import render_stl
-from typing import Any, Dict, Optional
 from app.core.evaluation import (
     evaluate_build,
     total_mass_from_bom_rows,
@@ -15,8 +15,21 @@ from app.core.evaluation import (
 from app.bom.generator import generate_bom
 from app.core.revisions import archive_revision, update_promotion_status
 from app.core.promotion import get_current_champion, should_promote, set_new_champion
+from app.core.promotion_gate import promotion_allowed
 from app.core.lineage import log_design_evolution
 from app.core.notifier import dispatch_cluster_alert
+
+# The RevisionIntent type lives in app.vision (where the
+# intent_adapter constructs it). The orchestrator is a
+# consumer, not a constructor: it receives the intent as
+# a kwarg and passes it to promotion_allowed. The type
+# import is intentionally a TYPE_CHECKING-only import
+# so the orchestrator module loads without requiring
+# app.vision at import time. This keeps the orchestrator
+# importable in tests and tools that do not depend on
+# the vision pipeline.
+if TYPE_CHECKING:
+    from app.vision.revision_intent import RevisionIntent
 
 logger = logging.getLogger("engine.orchestrator")
 
@@ -72,6 +85,7 @@ class EngineeringOrchestrator:
         attempt_in_chain: int = 0,
         ingestion_path: Optional[Dict[str, Any]] = None,
         auto_promote: bool = True,
+        revision_intent: Optional["RevisionIntent"] = None,
     ) -> Dict[str, Any]:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
         logger.info("Running build pipeline for %s [%s]", machine_name, revision_id)
@@ -271,15 +285,64 @@ class EngineeringOrchestrator:
 
         score = evaluation_result.get("composite", 0.0)
 
-        # promotion_mode is the *reason* the promotion block ended in
-        # its current state. The four values are mutually exclusive
-        # and exhaustive for the (auto_promote, old_rev, is_promoted)
-        # tuple. They are returned alongside ``promoted`` so callers
-        # (notably the Phase 17.2a drawing-ingest route) can
-        # distinguish "skipped by policy" from "would have promoted
-        # but the score wasn't good enough".
-        if not auto_promote:
-            promotion_mode = "disabled"
+        # The promotion gate (Phase 17.3) is the single
+        # enforcement boundary for the
+        # "completed != promotable" semantic transition.
+        # The gate is a pure function that returns True
+        # only when the revision_intent (or the legacy
+        # auto_promote boolean) authorizes a promotion.
+        # Pre-17.3 callers that don't pass a
+        # revision_intent get the legacy behavior:
+        # auto_promote=True means the gate returns True
+        # (assuming the score clears the threshold), and
+        # auto_promote=False means the gate returns False.
+        # New callers that pass a non-LEGACY intent get
+        # the explicit governance: the gate refuses
+        # unless the ingestion is APPROVED.
+        gate_allowed = promotion_allowed(revision_intent, auto_promote)
+
+        # promotion_mode is the *reason* the promotion
+        # block ended in its current state. The four
+        # pre-17.3 values are mutually exclusive and
+        # exhaustive for the (auto_promote, old_rev,
+        # is_promoted) tuple. The fifth value,
+        # "rejected_by_governance", is new in 17.3: it
+        # is the case where the legacy boolean would
+        # have allowed promotion but the gate refused
+        # (e.g., a non-LEGACY intent with the wrong
+        # review state). The route layer can use this
+        # to render an audit-trail-friendly 200 response
+        # that explains why the build completed but did
+        # not promote.
+        if not gate_allowed:
+            # The gate refused. This covers both
+            # auto_promote=False (legacy path) and
+            # non-LEGACY intent with the wrong state
+            # (17.3 path). The promotion_mode
+            # distinguishes the two via the
+            # rejected_by_governance value when the
+            # boolean was True but the gate said no.
+            #
+            # We use the gate's verdict and the
+            # legacy boolean together. When the
+            # boolean was False, the gate's refusal
+            # is the pre-17.3a "disabled" mode. When
+            # the boolean was True but the gate
+            # refused, that is the new 17.3 path:
+            # the gate saw a non-LEGACY intent that
+            # the policy did not authorize.
+            if not auto_promote:
+                # Legacy caller; auto_promote was False.
+                # The pre-17.3a "disabled" mode is
+                # preserved.
+                promotion_mode = "disabled"
+            else:
+                # New 17.3 path: the boolean would
+                # have allowed promotion but the gate
+                # refused. This covers the case where
+                # a caller passed a non-LEGACY intent
+                # with the wrong review state.
+                promotion_mode = "rejected_by_governance"
             is_promoted = False
         elif old_rev == "v0":
             promotion_mode = "no_prior_champion"
@@ -292,7 +355,21 @@ class EngineeringOrchestrator:
 
         promotion_triggered = False
 
-        if auto_promote and old_rev != "v0" and is_promoted:
+        # The promotion block is now gated on
+        # gate_allowed (which already encodes the
+        # legacy auto_promote boolean AND the
+        # 17.3 intent governance). The pre-17.3
+        # expression
+        # ``if auto_promote and old_rev != "v0" and is_promoted``
+        # is replaced by
+        # ``if gate_allowed and old_rev != "v0" and is_promoted``.
+        # For pre-17.3 callers (no intent) the gate
+        # reduces to ``auto_promote``, so the behavior
+        # is byte-equivalent. For new callers with a
+        # non-LEGACY intent, the gate enforces the
+        # review state. This is the "completed !=
+        # promotable" semantic transition made live.
+        if gate_allowed and old_rev != "v0" and is_promoted:
             if set_new_champion(machine_name, revision_id, score):
                 try:
                     update_promotion_status(machine_name, revision_id, "champion")

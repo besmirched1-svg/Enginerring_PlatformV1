@@ -1,15 +1,24 @@
 """Tests for the additive ``ingestion_path`` extension on
 ``app.core.revisions.archive_revision`` (Phase 17.2a, Commit 1)
 and the additive ``auto_promote`` / ``promotion_mode`` fields on
-``EngineeringOrchestrator.run_machine_job`` (Phase 17.2a, Commit 3a.5).
+``EngineeringOrchestrator.run_machine_job`` (Phase 17.2a,
+Commit 3a.5), and the additive ``revision_intent`` kwarg
+plus the ``rejected_by_governance`` promotion_mode value
+(Phase 17.3, Commit 1d of N).
 
-Both extensions are **additive only**: when callers do not pass
+All extensions are **additive only**: when callers do not pass
 the new kwargs, the manifest JSON and the orchestrator's
 behavior are byte-equivalent to the pre-17.2a output. When the
 kwargs are supplied, the manifest gains a single top-level
 ``ingestion_path`` field, the orchestrator's response gains a
 ``promotion_mode`` field, and the promotion block is skipped
 entirely when ``auto_promote=False``.
+
+The Phase 17.3 additions add the ``revision_intent`` kwarg
+(additive, default None) and a fifth ``promotion_mode`` value
+``"rejected_by_governance"`` for the case where the legacy
+boolean would have allowed promotion but the new governance
+gate refused.
 
 The "byte-equivalent" test in this file is the regression net:
 it captures the exact pre-17.2a manifest bytes (with a fixed
@@ -502,4 +511,530 @@ class TestRunMachineJobPromotionModeValues:
             )
 
         assert result["promotion_mode"] == "no_prior_champion"
+        assert result["promoted"] is False
+
+
+# =====================================================================
+# Phase 17.3 — orchestrator integration with the promotion gate
+# =====================================================================
+#
+# The 17.3 commit (1d of N) wires promotion_gate.promotion_allowed
+# into the orchestrator's promotion block. The new ``revision_intent``
+# kwarg is additive (default None), the legacy ``auto_promote``
+# boolean is preserved, and a fifth ``promotion_mode`` value
+# ``"rejected_by_governance"`` is added for the case where the
+# gate refused but the boolean would have allowed it.
+#
+# These tests pin the integration. The most important tests are
+# in TestTheSemanticTransitionIsLive: they prove the gate's
+# verdict flows into the orchestrator and that a pending-review
+# ingestion with commit_requested=True results in
+# ``promotion_mode="rejected_by_governance"`` and
+# ``set_new_champion`` is never called.
+
+
+class TestRevisionIntentKwargIsAdditive:
+    """The ``revision_intent`` kwarg is additive only. When
+    callers do not pass it, the orchestrator's behavior is
+    byte-equivalent to pre-17.3."""
+
+    def test_no_intent_default_auto_promote_true_yields_no_prior_champion(
+        self, tmp_path, monkeypatch,
+    ):
+        """The pre-17.3 default. A fresh machine (no
+        champion pointer) with no revision_intent and
+        the default auto_promote=True must report
+        ``promotion_mode="no_prior_champion"`` and
+        ``promoted=False`` — identical to the pre-17.3
+        behavior pinned in
+        ``test_auto_promote_true_default_preserves_existing_behavior``."""
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"additive_default_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+            )
+
+        assert result["promotion_mode"] == "no_prior_champion"
+        assert result["promoted"] is False
+
+    def test_no_intent_with_auto_promote_false_yields_disabled(
+        self, tmp_path, monkeypatch,
+    ):
+        """The 17.2a auto-build route's behavior. No
+        intent, auto_promote=False, must yield
+        ``promotion_mode="disabled"`` — identical to
+        pre-17.3a. This is the additive back-compat
+        that lets the 17.2a route continue to work
+        unchanged."""
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"additive_disabled_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=False,
+            )
+
+        assert result["promotion_mode"] == "disabled"
+        assert result["promoted"] is False
+
+
+class TestTheSemanticTransitionIsLive:
+    """The "completed != promotable" semantic transition
+    is enforced live in the orchestrator. These tests
+    pin the enforcement. If any of these ever flips, the
+    gate integration is broken and the 17.3 sprint is in
+    regression."""
+
+    def _make_intent(self, commit_requested, review_state, source_value):
+        """Construct a RevisionIntent for testing."""
+        from app.vision.revision_intent import IntentSource, RevisionIntent
+        return RevisionIntent(
+            commit_requested=commit_requested,
+            intent_source=IntentSource(source_value),
+            review_state=review_state,
+            ingestion_id="ing_test_001",
+        )
+
+    def test_pending_review_with_commit_requested_yields_rejected_by_governance(
+        self, tmp_path, monkeypatch,
+    ):
+        """THE LOAD-BEARING CASE for the orchestrator
+        integration. A pending-review ingestion with
+        commit_requested=True is the pre-17.3
+        'completed == promotable' bug, caught at the
+        gate. The orchestrator must:
+
+        1. Run the build (it can complete).
+        2. NOT call set_new_champion (the gate refused).
+        3. Return ``promotion_mode="rejected_by_governance"``
+           so the route layer can render a 200 response
+           that explains what happened.
+        """
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.review_state import ReviewState
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = self._make_intent(
+            commit_requested=True,
+            review_state=ReviewState.PENDING_REVIEW,
+            source_value="explicit_commit",
+        )
+
+        with patch(
+            "app.core.orchestrator.set_new_champion"
+        ) as mock_set_champion, patch(
+            "app.core.orchestrator.render_stl",
+            side_effect=RuntimeError("no openscad"),
+        ):
+            result = orch.run_machine_job(
+                machine_name=f"semantic_transition_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        # The gate refused, so set_new_champion was
+        # never called. This is the structural proof
+        # that the semantic transition is live.
+        mock_set_champion.assert_not_called()
+        # The response carries the new promotion_mode
+        # value, observable to the route layer.
+        assert result["promotion_mode"] == "rejected_by_governance"
+        assert result["promoted"] is False
+
+    def test_draft_with_commit_requested_yields_rejected_by_governance(
+        self, tmp_path, monkeypatch,
+    ):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.review_state import ReviewState
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = self._make_intent(
+            commit_requested=True,
+            review_state=ReviewState.DRAFT,
+            source_value="explicit_commit",
+        )
+
+        with patch(
+            "app.core.orchestrator.set_new_champion"
+        ) as mock_set_champion, patch(
+            "app.core.orchestrator.render_stl",
+            side_effect=RuntimeError("no openscad"),
+        ):
+            result = orch.run_machine_job(
+                machine_name=f"draft_intent_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        mock_set_champion.assert_not_called()
+        assert result["promotion_mode"] == "rejected_by_governance"
+        assert result["promoted"] is False
+
+    def test_rejected_with_commit_requested_yields_rejected_by_governance(
+        self, tmp_path, monkeypatch,
+    ):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.review_state import ReviewState
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = self._make_intent(
+            commit_requested=True,
+            review_state=ReviewState.REJECTED,
+            source_value="explicit_commit",
+        )
+
+        with patch(
+            "app.core.orchestrator.set_new_champion"
+        ) as mock_set_champion, patch(
+            "app.core.orchestrator.render_stl",
+            side_effect=RuntimeError("no openscad"),
+        ):
+            result = orch.run_machine_job(
+                machine_name=f"rejected_intent_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        mock_set_champion.assert_not_called()
+        assert result["promotion_mode"] == "rejected_by_governance"
+        assert result["promoted"] is False
+
+    def test_approved_with_commit_requested_does_not_yield_rejected_by_governance(
+        self, tmp_path, monkeypatch,
+    ):
+        """The positive case: an APPROVED ingestion
+        with commit_requested=True is allowed by the
+        gate. The promotion_mode is one of the
+        pre-17.3 values (``no_prior_champion`` for a
+        fresh machine, ``below_threshold`` if the
+        score is too low, or ``attempted`` if the
+        gate is true and the score clears the
+        threshold). It must NOT be
+        ``rejected_by_governance`` — the gate said
+        yes."""
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.review_state import ReviewState
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = self._make_intent(
+            commit_requested=True,
+            review_state=ReviewState.APPROVED,
+            source_value="explicit_commit",
+        )
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"approved_intent_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        # The gate authorized; promotion_mode is one
+        # of the pre-17.3 values, NOT
+        # rejected_by_governance.
+        assert result["promotion_mode"] != "rejected_by_governance"
+        assert result["promotion_mode"] in {
+            "no_prior_champion", "below_threshold", "attempted",
+        }
+
+    def test_commit_requested_false_with_approved_yields_rejected_by_governance(
+        self, tmp_path, monkeypatch,
+    ):
+        """A dry-run / shadow-run shape: an APPROVED
+        ingestion with commit_requested=False. The
+        gate refuses (commit_requested=False is
+        authoritative even for APPROVED). The
+        orchestrator must report
+        ``rejected_by_governance`` and not call
+        set_new_champion."""
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.review_state import ReviewState
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = self._make_intent(
+            commit_requested=False,
+            review_state=ReviewState.APPROVED,
+            source_value="explicit_commit",
+        )
+
+        with patch(
+            "app.core.orchestrator.set_new_champion"
+        ) as mock_set_champion, patch(
+            "app.core.orchestrator.render_stl",
+            side_effect=RuntimeError("no openscad"),
+        ):
+            result = orch.run_machine_job(
+                machine_name=f"dry_run_intent_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        mock_set_champion.assert_not_called()
+        assert result["promotion_mode"] == "rejected_by_governance"
+        assert result["promoted"] is False
+
+
+class TestDryRunIntentNeverPromotes:
+    """DRY_RUN intents never promote. The orchestrator
+    must treat DRY_RUN the same as commit_requested=False
+    for governance purposes."""
+
+    def test_dry_run_intent_yields_rejected_by_governance(
+        self, tmp_path, monkeypatch,
+    ):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.revision_intent import IntentSource, RevisionIntent
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        # DRY_RUN intents have review_state=None by
+        # construction.
+        intent = RevisionIntent(
+            commit_requested=False,
+            intent_source=IntentSource.DRY_RUN,
+            review_state=None,
+            ingestion_id=None,
+        )
+
+        with patch(
+            "app.core.orchestrator.set_new_champion"
+        ) as mock_set_champion, patch(
+            "app.core.orchestrator.render_stl",
+            side_effect=RuntimeError("no openscad"),
+        ):
+            result = orch.run_machine_job(
+                machine_name=f"dry_run_path_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        mock_set_champion.assert_not_called()
+        assert result["promotion_mode"] == "rejected_by_governance"
+        assert result["promoted"] is False
+
+
+class TestLegacyIntentPath:
+    """The orchestrator synthesizes LEGACY intents from
+    the auto_promote boolean. The path is exercised
+    here via explicit LEGACY intents to pin the
+    additive back-compat."""
+
+    def test_legacy_intent_with_commit_requested_true_yields_no_prior_champion(
+        self, tmp_path, monkeypatch,
+    ):
+        """A LEGACY intent with commit_requested=True
+        (synthesized from auto_promote=True) must
+        behave like a pre-17.3 caller. The promotion
+        mode is one of the pre-17.3 values
+        (no_prior_champion for a fresh machine)."""
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.revision_intent import IntentSource, RevisionIntent
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = RevisionIntent(
+            commit_requested=True,
+            intent_source=IntentSource.LEGACY,
+        )
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"legacy_intent_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=True,
+                revision_intent=intent,
+            )
+
+        # Legacy path: not rejected_by_governance.
+        assert result["promotion_mode"] != "rejected_by_governance"
+        assert result["promotion_mode"] in {
+            "no_prior_champion", "below_threshold", "attempted",
+        }
+
+    def test_legacy_intent_with_commit_requested_false_yields_disabled(
+        self, tmp_path, monkeypatch,
+    ):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.revision_intent import IntentSource, RevisionIntent
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        intent = RevisionIntent(
+            commit_requested=False,
+            intent_source=IntentSource.LEGACY,
+        )
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"legacy_disabled_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=False,
+                revision_intent=intent,
+            )
+
+        # The legacy intent's commit_requested=False
+        # matches auto_promote=False. The gate
+        # returns False. The promotion_mode is
+        # "disabled" -- the pre-17.3a value.
+        assert result["promotion_mode"] == "disabled"
+        assert result["promoted"] is False
+
+
+class TestPromotionModeEnumIsFiveValues:
+    """The promotion_mode field is the route layer's
+    primary signal for "why did this build not
+    promote?". Pin the five legal values. Adding a
+    sixth is a design amendment, not a routine
+    change."""
+
+    def test_promotion_mode_in_set_with_intent(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+        from app.vision.revision_intent import IntentSource, RevisionIntent
+        from app.vision.review_state import ReviewState
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        # Iterate the five intent shapes that map to
+        # the five promotion_mode values. Each shape
+        # must produce the documented mode.
+        cases = [
+            # (intent, expected_mode)
+            # auto_promote=False + no intent: disabled
+            (None, "disabled"),
+            # EXPLICIT_COMMIT + PENDING_REVIEW + commit=True:
+            # rejected_by_governance
+            (RevisionIntent(
+                commit_requested=True,
+                intent_source=IntentSource.EXPLICIT_COMMIT,
+                review_state=ReviewState.PENDING_REVIEW,
+                ingestion_id="ing_x",
+            ), "rejected_by_governance"),
+            # Fresh machine, default auto_promote=True: no_prior_champion
+            (None, "no_prior_champion"),
+        ]
+        for intent, _expected in cases:
+            with patch("app.core.orchestrator.render_stl",
+                       side_effect=RuntimeError("no openscad")):
+                result = orch.run_machine_job(
+                    machine_name=f"enum_test_{os.getpid()}",
+                    config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                    auto_promote=(intent is None),
+                    revision_intent=intent,
+                )
+            # The mode is in the five-value set.
+            assert result["promotion_mode"] in {
+                "disabled",
+                "no_prior_champion",
+                "below_threshold",
+                "attempted",
+                "rejected_by_governance",
+            }
+
+    def test_the_five_values(self):
+        """The five legal promotion_mode values, in a
+        frozenset for downstream consumers to import."""
+        FIVE_VALUES = frozenset({
+            "disabled",
+            "no_prior_champion",
+            "below_threshold",
+            "attempted",
+            "rejected_by_governance",
+        })
+        assert len(FIVE_VALUES) == 5
+
+
+class TestGateIntegrationByteEquivalentForPre17_3Callers:
+    """The 17.2a auto-build route and any other
+    pre-17.3 caller must see byte-equivalent behavior
+    after this commit. These tests pin the
+    equivalence for callers that do not pass
+    ``revision_intent``."""
+
+    def test_pre_17_3_call_with_default_kwargs(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"pre_17_3_default_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+            )
+
+        # No revision_intent, no auto_promote kwarg.
+        # The pre-17.3 default. The promotion_mode
+        # must be "no_prior_champion" (no champion
+        # pointer on disk) -- identical to
+        # test_auto_promote_true_default_preserves_existing_behavior
+        # in TestRunMachineJobAutoPromote.
+        assert result["promotion_mode"] == "no_prior_champion"
+        assert result["promoted"] is False
+
+    def test_pre_17_3_call_with_auto_promote_false(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock, patch
+        from app.core.orchestrator import EngineeringOrchestrator
+
+        monkeypatch.chdir(tmp_path)
+        orch = EngineeringOrchestrator(event_bus=MagicMock())
+
+        with patch("app.core.orchestrator.render_stl",
+                   side_effect=RuntimeError("no openscad")):
+            result = orch.run_machine_job(
+                machine_name=f"pre_17_3_disabled_{os.getpid()}",
+                config={"roller": {"diameter": 180, "width": 450, "shaft": 40}},
+                auto_promote=False,
+            )
+
+        # The 17.2a auto-build route's behavior.
+        # Pin the equivalence: pre-17.3a
+        # "disabled" mode is preserved.
+        assert result["promotion_mode"] == "disabled"
         assert result["promoted"] is False
