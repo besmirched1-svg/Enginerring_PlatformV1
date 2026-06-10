@@ -47,12 +47,14 @@ from app.physics import (
 from .models import (
     DesignStage,
     DirectorResult,
+    DynamicConstraint,
     EngineeringGoal,
     EngineeringPack,
     EngineeringPlan,
     ManufacturingResult,
     PhysicsResult,
     PlanTask,
+    apply_dynamic_constraint,
 )
 from .planner import EngineeringPlanner
 from .packer import EngineeringPackAssembler
@@ -746,6 +748,109 @@ class EngineerDirector:
         result.stage_log = self.stage_log
         logger.error("Director pipeline failed after %.1fs: %s", elapsed, "; ".join(errors))
         return result
+
+
+# ---------------------------------------------------------------------------
+# Phase 15: Closed-loop constraint adaptation
+# ---------------------------------------------------------------------------
+#
+# When telemetry / reasoning surfaces a "lesson" (a recorded failure,
+# deviation, or extracted rule), we convert it into a DynamicConstraint and
+# apply it to a new EngineeringGoal. A simple grammar maps lesson text to
+# constraint parameters, but the lesson strings are written by us so we
+# use a structured trigger path for predictability.
+
+# Keywords the FeedbackTrigger / KnowledgeReasoner may surface, mapped to
+# the constraint parameter path and the operation we want to enforce.
+_LESSON_KEYWORD_MAP = {
+    "shaft_od": ("spindle.shaft_od", "min"),
+    "wall_thickness": ("drum.wall_thickness", "min"),
+    "drum_wall": ("drum.wall_thickness", "min"),
+    "weld_length": ("frame.weld_length", "max"),
+    "cost_per_kg": ("frame.cost_per_kg_aud", "max"),
+    "frame_rail_a": ("frame.rail_a", "min"),
+}
+
+
+def _derive_constraint_from_lesson(lesson: Dict[str, Any]) -> Optional[DynamicConstraint]:
+    """Build a DynamicConstraint from a knowledge-store lesson dict.
+
+    Returns ``None`` if the lesson does not describe a measurable constraint.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    text = " ".join(
+        str(lesson.get(k, "")) for k in ("lesson", "description", "error")
+    ).lower()
+    machine = str(lesson.get("machine_name") or lesson.get("machine_id") or "")
+    severity = str(lesson.get("severity") or "normal")
+    for keyword, (param, op) in _LESSON_KEYWORD_MAP.items():
+        if keyword in text:
+            value = lesson.get("value") or lesson.get("deviation_pct") or 0.0
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = 0.0
+            return DynamicConstraint(
+                constraint_id=f"dc_{uuid.uuid4().hex[:10]}",
+                machine_type=machine,
+                parameter=param,
+                operator=op,
+                value=value,
+                source_lesson=text[:200],
+                severity=severity,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+    return None
+
+
+def watch_for_lessons(
+    knowledge_store: Any = None,
+    machine_type: str = "",
+    since_ts: str = "",
+) -> List[DynamicConstraint]:
+    """Scan the knowledge store for new lessons and convert them to constraints.
+
+    A lesson becomes a constraint when it matches a known engineering
+    keyword. Records already converted are not re-emitted; this function is
+    idempotent within a process.
+    """
+    from app.knowledge.store import get_knowledge_store
+
+    store = knowledge_store or get_knowledge_store()
+    records = store.query(machine_name=machine_type or None, limit=200)
+    out: List[DynamicConstraint] = []
+    for rec in records:
+        ts = rec.get("ts", "")
+        if since_ts and ts <= since_ts:
+            continue
+        if rec.get("record_type") not in (
+            "telemetry_feedback", "failure", "evaluation", "qa_measurement",
+        ):
+            continue
+        dc = _derive_constraint_from_lesson(rec)
+        if dc is not None:
+            out.append(dc)
+    return out
+
+
+def adapt_goal_with_lessons(
+    goal: EngineeringGoal,
+    knowledge_store: Any = None,
+) -> tuple[EngineeringGoal, List[DynamicConstraint]]:
+    """Read new lessons and return (new_goal, constraints_applied).
+
+    The returned goal is a deepcopy with the constraints merged in. The
+    caller can decide whether to trigger another ``run_engineering_pipeline``.
+    """
+    constraints = watch_for_lessons(
+        knowledge_store=knowledge_store, machine_type=goal.machine_type,
+    )
+    new_goal = goal
+    for dc in constraints:
+        new_goal = apply_dynamic_constraint(new_goal, dc)
+    return new_goal, constraints
 
 
 def run_engineering_pipeline(

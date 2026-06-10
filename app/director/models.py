@@ -128,3 +128,66 @@ class DirectorResult:
     iterations: int = 0
     stage_log: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+
+
+@dataclass
+class DynamicConstraint:
+    """A constraint learned from a knowledge-store lesson and applied to a goal.
+
+    Field failures / reasoning lessons are surfaced as new bounds on
+    EngineeringGoal.constraints. The Director watches for un-applied
+    ``DynamicConstraint`` records and re-runs evolution with them in place.
+    """
+    constraint_id: str
+    machine_type: str
+    parameter: str            # dotted path into EngineeringGoal.constraints
+    operator: str = "min"     # "min" | "max" | "eq" | "not_in"
+    value: Any = 0.0
+    source_lesson: str = ""
+    severity: str = "normal"  # "normal" | "high" | "critical"
+    created_at: str = ""
+    applied: bool = False
+    applied_at: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "constraint_id": self.constraint_id,
+            "machine_type": self.machine_type,
+            "parameter": self.parameter,
+            "operator": self.operator,
+            "value": self.value,
+            "source_lesson": self.source_lesson,
+            "severity": self.severity,
+            "created_at": self.created_at,
+            "applied": self.applied,
+            "applied_at": self.applied_at,
+        }
+
+
+def apply_dynamic_constraint(goal: EngineeringGoal, dc: DynamicConstraint) -> EngineeringGoal:
+    """Return a new EngineeringGoal with ``dc`` merged into its constraints.
+
+    The constraint value is stored as ``{op, value, source_lesson, severity}``
+    at the dotted path. If the last path segment is a fresh key, the entire
+    path is built. The original goal is not mutated.
+    """
+    import copy
+    new_goal = copy.deepcopy(goal)
+    parts = dc.parameter.split(".")
+    cursor: Dict[str, Any] = new_goal.constraints
+    for part in parts[:-1]:
+        if part not in cursor or not isinstance(cursor[part], dict):
+            cursor[part] = {}
+        cursor = cursor[part]
+    leaf = parts[-1]
+    payload = {"op": dc.operator, "value": dc.value,
+               "source_lesson": dc.source_lesson,
+               "severity": dc.severity}
+    existing = cursor.get(leaf)
+    if isinstance(existing, dict) and all(k in existing for k in ("op", "value")):
+        # If a structured constraint is already there, treat this as an
+        # additional one (e.g. "min" + "max" on the same parameter).
+        existing.setdefault("combined", []).append({k: v for k, v in payload.items() if k != "source_lesson"})
+    else:
+        cursor[leaf] = payload
+    return new_goal

@@ -4,6 +4,7 @@ import logging
 import subprocess
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -1692,4 +1693,172 @@ def get_evolution_result(job_id: str):
         "nadir_point": result.get("nadir_point", []),
         "knee": result.get("knee"),
         "solutions": result.get("solutions", []),
+    }
+
+
+# =====================================================================
+# Phase 15 — Manufacturing & Deployment API
+# =====================================================================
+#
+# These endpoints expose the production package (cut lists, weld maps, CNC
+# programs, QA plans, commissioning plans, field telemetry schemas) and
+# the Director's closed-loop adaptation (DynamicConstraint).
+# =====================================================================
+
+
+class ManufacturingPartsRequest(BaseModel):
+    parts: List[Dict[str, Any]] = []
+    joints: List[Dict[str, Any]] = []
+    process: str = "laser"
+    sheet_width_mm: float = 1500.0
+    sheet_length_mm: float = 3000.0
+    sheet_thickness_mm: float = 6.0
+    sheet_material: str = "mild_steel"
+
+
+@router.post("/manufacturing/cutlist", tags=["manufacturing"])
+def generate_cutlist(payload: ManufacturingPartsRequest):
+    """Run the cut list analyzer and return a CutListDocument."""
+    from app.manufacturing import CutListConfig, CutListAnalyzer
+    from app.manufacturing.cutlists import CutPart, PartShape
+    from app.production import build_cutlist_document
+
+    config = CutListConfig(
+        sheet_width_mm=payload.sheet_width_mm,
+        sheet_length_mm=payload.sheet_length_mm,
+        sheet_thickness_mm=payload.sheet_thickness_mm,
+        sheet_material=payload.sheet_material,
+    )
+    parts = []
+    for raw in payload.parts:
+        try:
+            shape = PartShape(raw.get("shape", "rectangle"))
+        except ValueError:
+            shape = PartShape.RECTANGLE
+        parts.append(CutPart(
+            part_id=raw.get("part_id", "part"),
+            shape=shape,
+            length_mm=float(raw.get("length_mm", 0.0)),
+            width_mm=float(raw.get("width_mm", 0.0)),
+            thickness_mm=float(raw.get("thickness_mm", config.sheet_thickness_mm)),
+            quantity=int(raw.get("quantity", 1)),
+            material=raw.get("material", config.sheet_material),
+        ))
+    analyzer = CutListAnalyzer(config)
+    result = analyzer.analyze(parts)
+    doc = build_cutlist_document(result, process=payload.process)
+    return {"status": "ok", "document": doc.to_dict(), "csv": doc.to_csv()}
+
+
+@router.post("/manufacturing/weldmap", tags=["manufacturing"])
+def generate_weldmap(payload: ManufacturingPartsRequest):
+    """Run the weld analyzer and return a WeldMapDocument."""
+    from app.manufacturing import WeldAnalyzer, WeldJoint, WeldJointType
+    from app.production import build_weldmap_document
+
+    joints = []
+    for raw in payload.joints:
+        try:
+            joint_type = WeldJointType(raw.get("joint_type", "fillet"))
+        except ValueError:
+            joint_type = WeldJointType.FILLET
+        joints.append(WeldJoint(
+            joint_id=raw.get("joint_id", "joint"),
+            joint_type=joint_type,
+            weld_length_mm=float(raw.get("weld_length_mm", 0.0)),
+            throat_thickness_mm=float(raw.get("throat_thickness_mm", 5.0)),
+            plate_thickness_mm_1=float(raw.get("plate_thickness_mm_1", 6.0)),
+            plate_thickness_mm_2=float(raw.get("plate_thickness_mm_2", 6.0)),
+            root_gap_mm=float(raw.get("root_gap_mm", 2.0)),
+            passes=int(raw.get("passes", 1)),
+            quantity=int(raw.get("quantity", 1)),
+        ))
+    result = WeldAnalyzer().analyze(joints)
+    doc = build_weldmap_document(result)
+    return {"status": "ok", "document": doc.to_dict(), "csv": doc.to_csv()}
+
+
+class DXFRequest(BaseModel):
+    scad_code: str
+    output_name: str = "part.dxf"
+
+
+@router.post("/manufacturing/dxf", tags=["manufacturing"])
+def render_dxf(payload: DXFRequest):
+    """Project a SCAD part to 2D DXF via OpenSCAD and stream the file back."""
+    from app.cad.openscad_service import OpenSCADService
+    import tempfile
+
+    out_dir = Path("./outputs/manufacturing/dxf")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / payload.output_name
+    try:
+        OpenSCADService.render_scad_to_dxf(payload.scad_code, str(out_path))
+        return FileResponse(path=str(out_path), media_type="application/dxf",
+                            filename=payload.output_name)
+    except RuntimeError as exc:
+        # OpenSCAD binary missing in some test environments — surface 503
+        raise HTTPException(status_code=503, detail=f"OpenSCAD unavailable: {exc}")
+
+
+@router.get("/manufacturing/cutlist/example", tags=["manufacturing"])
+def cutlist_example():
+    """Return a ready-to-call sample cut list payload (for docs / tests)."""
+    return {
+        "parts": [
+            {"part_id": "side_panel", "length_mm": 800, "width_mm": 400,
+             "thickness_mm": 6, "quantity": 2, "shape": "rectangle"},
+            {"part_id": "end_plate", "length_mm": 400, "width_mm": 400,
+             "thickness_mm": 10, "quantity": 2, "shape": "rectangle"},
+        ],
+        "process": "laser",
+    }
+
+
+@router.post("/manufacturing/package", tags=["manufacturing"])
+def build_full_package(payload: Dict[str, Any]):
+    """Build a complete ProductionPackage from request fields."""
+    from app.production import build_production_package
+
+    pkg = build_production_package(
+        machine_name=payload.get("machine_name", "machine"),
+        cut_list_result=payload.get("cut_list_result"),
+        weld_map=payload.get("weld_map"),
+        cnc_programs=payload.get("cnc_programs"),
+        rated_rpm=float(payload.get("rated_rpm", 0.0)),
+        rated_power_kw=float(payload.get("rated_power_kw", 0.0)),
+        rated_throughput_kg_hr=float(payload.get("rated_throughput_kg_hr", 0.0)),
+    )
+    return {"status": "ok", "package": pkg.to_dict()}
+
+
+class AdaptGoalRequest(BaseModel):
+    machine_type: str
+    prompt: str = ""
+    constraints: Dict[str, Any] = {}
+    preferences: Dict[str, Any] = {}
+
+
+@router.post("/director/adapt", tags=["director"])
+def adapt_goal(payload: AdaptGoalRequest):
+    """Watch the knowledge store for new lessons and apply them as constraints.
+
+    Returns the new EngineeringGoal with the merged constraints and a list
+    of the DynamicConstraint records that were applied.
+    """
+    from app.director.engineer import adapt_goal_with_lessons
+    from app.director.models import EngineeringGoal
+
+    goal = EngineeringGoal(
+        prompt=payload.prompt,
+        machine_type=payload.machine_type,
+        constraints=payload.constraints,
+        preferences=payload.preferences,
+    )
+    new_goal, applied = adapt_goal_with_lessons(goal)
+    return {
+        "status": "ok",
+        "constraints_applied": len(applied),
+        "applied": [dc.to_dict() for dc in applied],
+        "new_goal_constraints": new_goal.constraints,
     }

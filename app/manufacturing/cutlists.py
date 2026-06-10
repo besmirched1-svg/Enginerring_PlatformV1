@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import math
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("engine.manufacturing.cutlists")
@@ -325,6 +327,59 @@ def analyze_cutlist(
     )
     analyzer = CutListAnalyzer(config)
     return analyzer.analyze(parts)
+
+
+class ProductionCutListGenerator:
+    """Generates production-ready cut lists as CSV and formatted reports."""
+
+    def __init__(self, analyzer: Optional[CutListAnalyzer] = None):
+        self.analyzer = analyzer or CutListAnalyzer()
+
+    def generate(self, parts: List[CutPart], job_id: str, output_dir: Path) -> Dict[str, Path]:
+        """
+        Generates a production CSV and a text-based summary report.
+        """
+        logger.info("Generating production cut list for job %s", job_id)
+
+        # 1. Perform analysis to get totals and efficiency
+        analysis_result = self.analyzer.analyze(parts)
+
+        # 2. Generate CSV for the shop floor
+        csv_path = output_dir / f"cutlist_{job_id}.csv"
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Part ID", "Quantity", "Length (mm)", "Width (mm)", "Thickness (mm)", "Material", "Shape"])
+            for p in parts:
+                writer.writerow([p.part_id, p.quantity, p.length_mm, p.width_mm, p.thickness_mm, p.material, p.shape.value])
+
+        # 3. Generate formatted Text Summary (Proxy for PDF)
+        summary_path = output_dir / f"cutlist_summary_{job_id}.txt"
+        with open(summary_path, "w", encoding="utf-8") as f:
+            f.write("=" * 60 + "\n")
+            f.write(f"PRODUCTION CUT LIST SUMMARY - Job: {job_id}\n")
+            f.write("=" * 60 + "\n")
+            f.write(f"Process:           {self.analyzer.config.process.value}\n")
+            f.write(f"Sheet Dimensions:   {self.analyzer.config.sheet_width_mm}x{self.analyzer.config.sheet_length_mm}x{self.analyzer.config.sheet_thickness_mm} mm\n")
+            f.write(f"Material:          {self.analyzer.config.sheet_material}\n")
+            f.write("-" * 60 + "\n")
+            f.write(f"Total Parts:       {analysis_result.total_parts}\n")
+            f.write(f"Sheets Required:    {analysis_result.sheets_required}\n")
+            f.write(f"Total Mass:        {analysis_result.total_mass_kg:.2f} kg\n")
+            f.write(f"Material Util:      {analysis_result.material_utilisation:.1f}%\n")
+            f.write(f"Estimated Cut Time: {analysis_result.total_cut_time_minutes:.1f} min\n")
+            f.write("-" * 60 + "\n")
+            if analysis_result.notes:
+                f.write("Notes:\n")
+                for note in analysis_result.notes:
+                    f.write(f"- {note}\n")
+            f.write("=" * 60 + "\n")
+
+        return {
+            "csv": csv_path,
+            "summary": summary_path
+        }
 
 
 if __name__ == "__main__":

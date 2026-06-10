@@ -101,3 +101,57 @@ class OpenSCADService:
                 os.remove(scad_path)
             except OSError:
                 pass
+
+    @staticmethod
+    def render_scad_to_dxf(scad_code: str, output_path: str, axis: str = "z") -> Path:
+        """
+        Project a 3D SCAD model onto a 2D plane and render to DXF.
+
+        The 'axis' parameter determines the projection plane (default 'z').
+        """
+        openscad_bin = _resolve_openscad()
+
+        # Wrap the SCAD code in projection() to flatten it for CNC/Laser cutting.
+        # We use a simple projection wrapper. If 'axis' was more complex,
+        # we'd handle rotations here.
+        projected_scad = f"projection(cut = false) {{\n{scad_code}\n}}"
+        cleaned_scad = projected_scad.replace("\r\n", "\n").strip() + "\n"
+
+        out = Path(output_path).with_suffix(".dxf")
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".scad",
+            delete=False,
+            mode="w",
+            encoding="utf-8",
+        ) as scad_file:
+            scad_file.write(cleaned_scad)
+            scad_path = scad_file.name
+
+        try:
+            result = subprocess.run(
+                [openscad_bin, "-o", str(out), scad_path],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+
+            if result.returncode != 0:
+                logger.error(
+                    "OpenSCAD DXF render failed (rc=%s): stdout=%r stderr=%r",
+                    result.returncode, result.stdout, result.stderr,
+                )
+                raise RuntimeError(
+                    f"OpenSCAD DXF render failed (rc={result.returncode}): "
+                    f"{result.stderr.strip() or result.stdout.strip()}"
+                )
+
+            logger.info("Rendered SCAD (Projected) -> %s", out.resolve())
+            return out
+
+        finally:
+            try:
+                os.remove(scad_path)
+            except OSError:
+                pass

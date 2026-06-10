@@ -1068,6 +1068,222 @@ def cmd_research_ingest(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase 15: manufacturing / production CLI commands
+# ---------------------------------------------------------------------------
+
+def cmd_gen_cutlist(args: argparse.Namespace) -> int:
+    """Generate a production cut list from a YAML/JSON job spec on disk."""
+    import json as _json
+    from app.manufacturing import CutListConfig, CutListAnalyzer
+    from app.manufacturing.cutlists import CutPart, PartShape
+    from app.production import build_cutlist_document
+
+    if not os.path.isfile(args.spec):
+        print(f"  Spec file not found: {args.spec}")
+        return 1
+    try:
+        with open(args.spec, "r", encoding="utf-8") as f:
+            data = _json.load(f) if args.spec.endswith(".json") else None
+        if data is None:
+            import yaml as _yaml  # optional
+            with open(args.spec, "r", encoding="utf-8") as f:
+                data = _yaml.safe_load(f)
+    except Exception as exc:
+        print(f"  Failed to read spec: {exc}")
+        return 1
+
+    config = CutListConfig(
+        sheet_width_mm=float(data.get("sheet_width_mm", 1500.0)),
+        sheet_length_mm=float(data.get("sheet_length_mm", 3000.0)),
+        sheet_thickness_mm=float(data.get("sheet_thickness_mm", 6.0)),
+        sheet_material=str(data.get("sheet_material", "mild_steel")),
+    )
+    parts = []
+    for raw in data.get("parts", []):
+        try:
+            shape = PartShape(raw.get("shape", "rectangle"))
+        except ValueError:
+            shape = PartShape.RECTANGLE
+        parts.append(CutPart(
+            part_id=raw.get("part_id", "part"),
+            shape=shape,
+            length_mm=float(raw.get("length_mm", 0.0)),
+            width_mm=float(raw.get("width_mm", 0.0)),
+            thickness_mm=float(raw.get("thickness_mm", config.sheet_thickness_mm)),
+            quantity=int(raw.get("quantity", 1)),
+            material=raw.get("material", config.sheet_material),
+        ))
+    analyzer = CutListAnalyzer(config)
+    result = analyzer.analyze(parts)
+    doc = build_cutlist_document(result, process=str(data.get("process", "laser")))
+
+    os.makedirs(args.out, exist_ok=True)
+    base = os.path.join(args.out, args.job_id)
+    csv_path = base + "_cutlist.csv"
+    with open(csv_path, "w", encoding="utf-8") as f:
+        f.write(doc.to_csv())
+    print()
+    print("  Production Cut List")
+    print("  " + "=" * 56)
+    print(f"  Job:        {args.job_id}")
+    print(f"  Process:    {doc.process}")
+    print(f"  Parts:      {doc.total_parts}")
+    print(f"  Sheets:     {doc.sheets_required}")
+    print(f"  Utilisation:{doc.material_utilisation:.1f}%")
+    print(f"  Mass:       {doc.total_mass_kg:.2f} kg")
+    print(f"  CSV:        {csv_path}")
+    print()
+    return 0
+
+
+def cmd_gen_weldmap(args: argparse.Namespace) -> int:
+    """Generate a production weld map from a YAML/JSON spec on disk."""
+    import json as _json
+    from app.manufacturing import WeldAnalyzer, WeldJoint, WeldJointType
+    from app.production import build_weldmap_document
+
+    if not os.path.isfile(args.spec):
+        print(f"  Spec file not found: {args.spec}")
+        return 1
+    try:
+        with open(args.spec, "r", encoding="utf-8") as f:
+            data = _json.load(f) if args.spec.endswith(".json") else None
+        if data is None:
+            import yaml as _yaml
+            with open(args.spec, "r", encoding="utf-8") as f:
+                data = _yaml.safe_load(f)
+    except Exception as exc:
+        print(f"  Failed to read spec: {exc}")
+        return 1
+
+    joints = []
+    for raw in data.get("joints", []):
+        try:
+            joint_type = WeldJointType(raw.get("joint_type", "fillet"))
+        except ValueError:
+            joint_type = WeldJointType.FILLET
+        joints.append(WeldJoint(
+            joint_id=raw.get("joint_id", "joint"),
+            joint_type=joint_type,
+            weld_length_mm=float(raw.get("weld_length_mm", 0.0)),
+            throat_thickness_mm=float(raw.get("throat_thickness_mm", 5.0)),
+            plate_thickness_mm_1=float(raw.get("plate_thickness_mm_1", 6.0)),
+            plate_thickness_mm_2=float(raw.get("plate_thickness_mm_2", 6.0)),
+            root_gap_mm=float(raw.get("root_gap_mm", 2.0)),
+            passes=int(raw.get("passes", 1)),
+            quantity=int(raw.get("quantity", 1)),
+        ))
+    result = WeldAnalyzer().analyze(joints)
+    doc = build_weldmap_document(result)
+
+    os.makedirs(args.out, exist_ok=True)
+    base = os.path.join(args.out, args.job_id)
+    csv_path = base + "_weldmap.csv"
+    with open(csv_path, "w", encoding="utf-8") as f:
+        f.write(doc.to_csv())
+    print()
+    print("  Production Weld Map")
+    print("  " + "=" * 56)
+    print(f"  Job:        {args.job_id}")
+    print(f"  Joints:     {len(doc.rows)}")
+    print(f"  Total Weld: {doc.total_weld_length_mm / 1000.0:.2f} m")
+    print(f"  Deposit:    {doc.total_deposit_mass_kg:.3f} kg")
+    print(f"  Electrode:  {doc.electrode_mass_kg:.3f} kg")
+    print(f"  Gas:        {doc.gas_volume_litres:.1f} L")
+    print(f"  CSV:        {csv_path}")
+    print()
+    return 0
+
+
+def cmd_qa_record(args: argparse.Namespace) -> int:
+    """Record a QA measurement against an existing QA plan and report result."""
+    from app.knowledge.store import get_knowledge_store
+
+    ks = get_knowledge_store()
+    in_tol = abs(float(args.actual) - float(args.nominal)) <= float(args.tolerance)
+    record = {
+        "record_type": "qa_measurement",
+        "machine_name": args.machine,
+        "check_id": args.check_id,
+        "metric": args.metric,
+        "nominal": float(args.nominal),
+        "actual": float(args.actual),
+        "tolerance": float(args.tolerance),
+        "passed": bool(in_tol),
+        "lesson": (
+            f"QA {args.machine}.{args.metric} measured {args.actual} "
+            f"vs nominal {args.nominal} ±{args.tolerance} -> "
+            f"{'PASS' if in_tol else 'CRITICAL DEVIATION'}"
+        ),
+    }
+    ks._append(record)
+    print()
+    print("  QA Measurement Recorded")
+    print("  " + "=" * 56)
+    for k, v in record.items():
+        print(f"  {k:14s} {v}")
+    print()
+    if not in_tol:
+        print("  >>> CRITICAL DEVIATION: this record will trigger the closed-loop.")
+        print("  >>> The Director will adapt constraints on the next run.")
+        print()
+    return 0 if in_tol else 2
+
+
+def cmd_adapt_goal(args: argparse.Namespace) -> int:
+    """Apply any new knowledge-store lessons to a goal and print new constraints."""
+    from app.director.engineer import adapt_goal_with_lessons
+    from app.director.models import EngineeringGoal
+
+    goal = EngineeringGoal(
+        prompt=args.prompt or "",
+        machine_type=args.machine_type,
+        constraints={},
+    )
+    new_goal, applied = adapt_goal_with_lessons(goal)
+    print()
+    print("  Closed-Loop Constraint Adaptation")
+    print("  " + "=" * 56)
+    print(f"  Machine type: {args.machine_type}")
+    print(f"  Lessons applied: {len(applied)}")
+    for dc in applied:
+        print(f"    {dc.parameter:24s} {dc.operator:5s} {dc.value}  "
+              f"[{dc.severity}]  ({dc.constraint_id})")
+    print()
+    if applied:
+        print("  New constraint block:")
+        for k, v in new_goal.constraints.items():
+            print(f"    {k}: {v}")
+        print()
+    return 0
+
+
+def cmd_gen_dxf(args: argparse.Namespace) -> int:
+    """Project a SCAD file to 2D DXF for CNC/laser cutting."""
+    from app.cad.openscad_service import OpenSCADService
+
+    if not os.path.isfile(args.scad):
+        print(f"  SCAD file not found: {args.scad}")
+        return 1
+    with open(args.scad, "r", encoding="utf-8") as f:
+        scad_code = f.read()
+    os.makedirs(args.out, exist_ok=True)
+    out_path = os.path.join(args.out, args.name or "part.dxf")
+    try:
+        result = OpenSCADService.render_scad_to_dxf(scad_code, out_path)
+    except RuntimeError as exc:
+        print(f"  OpenSCAD error: {exc}")
+        return 1
+    print()
+    print("  DXF Generation")
+    print("  " + "=" * 56)
+    print(f"  SCAD:  {args.scad}")
+    print(f"  DXF:   {result}")
+    print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -1206,6 +1422,35 @@ def main() -> int:
     ingest_p.add_argument("--knowledge-base", default="./knowledge_base", help="Knowledge base path")
     ingest_p.add_argument("--graph-out", default="", help="Save the knowledge graph to this path")
 
+    # manufacturing (Phase 15)
+    cutlist_p = subparsers.add_parser("gen-cutlist", help="Generate a production cut list")
+    cutlist_p.add_argument("--spec", required=True, help="Path to a JSON or YAML spec")
+    cutlist_p.add_argument("--job-id", default="job", help="Job identifier for output filenames")
+    cutlist_p.add_argument("--out", default="./outputs/manufacturing", help="Output directory")
+
+    weldmap_p = subparsers.add_parser("gen-weldmap", help="Generate a production weld map")
+    weldmap_p.add_argument("--spec", required=True, help="Path to a JSON or YAML spec")
+    weldmap_p.add_argument("--job-id", default="job", help="Job identifier for output filenames")
+    weldmap_p.add_argument("--out", default="./outputs/manufacturing", help="Output directory")
+
+    dxf_p = subparsers.add_parser("gen-dxf", help="Project a SCAD file to DXF")
+    dxf_p.add_argument("--scad", required=True, help="Path to the .scad file")
+    dxf_p.add_argument("--out", default="./outputs/manufacturing/dxf", help="Output directory")
+    dxf_p.add_argument("--name", default="part.dxf", help="Output filename")
+
+    qa_p = subparsers.add_parser("qa-record", help="Record a QA measurement and flag deviations")
+    qa_p.add_argument("--machine", required=True, help="Machine name")
+    qa_p.add_argument("--check-id", required=True, help="QA check identifier")
+    qa_p.add_argument("--metric", default="", help="Metric being measured")
+    qa_p.add_argument("--nominal", type=float, required=True, help="Nominal value")
+    qa_p.add_argument("--actual", type=float, required=True, help="Measured value")
+    qa_p.add_argument("--tolerance", type=float, default=0.5, help="Symmetric tolerance")
+
+    adapt_p = subparsers.add_parser("adapt-goal",
+                                    help="Apply knowledge-store lessons to a goal")
+    adapt_p.add_argument("--machine-type", default="hemp_roller", help="Machine type")
+    adapt_p.add_argument("--prompt", default="", help="Optional prompt for context")
+
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging")
 
@@ -1281,6 +1526,16 @@ def main() -> int:
             "ingest": cmd_research_ingest,
         }
         return research_map.get(args.research_cmd, lambda a: print("Unknown research command"))(args)
+    elif args.command == "gen-cutlist":
+        return cmd_gen_cutlist(args)
+    elif args.command == "gen-weldmap":
+        return cmd_gen_weldmap(args)
+    elif args.command == "gen-dxf":
+        return cmd_gen_dxf(args)
+    elif args.command == "qa-record":
+        return cmd_qa_record(args)
+    elif args.command == "adapt-goal":
+        return cmd_adapt_goal(args)
     elif args.command == "data-dir":
         return cmd_data_dir(args)
     elif args.command == "dashboard":
