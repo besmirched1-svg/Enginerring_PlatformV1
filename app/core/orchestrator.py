@@ -1,6 +1,8 @@
 import os
 import uuid
 import logging
+import json
+import shutil
 import subprocess
 from pathlib import Path
 from app.cad.renderer import render_stl
@@ -92,10 +94,37 @@ class EngineeringOrchestrator:
         self._emit_event("scad_generated", {"machine_name": machine_name, "revision_id": revision_id, "scad_path": scad_path})
 
         try:
-            render_result = render_stl(Path(scad_path))
+            render_result = render_stl(Path(scad_path), output_dir=Path(rev_dir))
 
+            # Prefer the per-revision paths the renderer just wrote;
+            # the global STL_DIR/IMAGES_DIR fallback (when output_dir is
+            # None) intentionally does not happen on this code path.
             stl_path = render_result["stl"]
             png_path = render_result["png"]
+
+            # Rename the rendered STL to the user-facing name
+            # ``output.stl`` (the renderer names it after the SCAD
+            # stem, which is ``model.stl`` for the orchestrator's
+            # pipeline). The user/UI contract is ``output.stl``.
+            final_stl_path = os.path.join(rev_dir, "output.stl")
+            try:
+                if os.path.abspath(stl_path) != os.path.abspath(final_stl_path):
+                    if os.path.exists(stl_path):
+                        os.replace(stl_path, final_stl_path)
+                    stl_path = final_stl_path
+            except Exception:
+                logger.exception("Could not rename %s -> %s", stl_path, final_stl_path)
+
+            # Rename the PNG to the user-facing name ``preview.png``
+            # so the revision directory matches the documented layout.
+            preview_path = os.path.join(rev_dir, "preview.png")
+            try:
+                if os.path.abspath(png_path) != os.path.abspath(preview_path):
+                    if os.path.exists(png_path):
+                        os.replace(png_path, preview_path)
+                    png_path = preview_path
+            except Exception:
+                logger.exception("Could not rename %s -> %s", png_path, preview_path)
 
             self._emit_event(
                 "stl_generated",
@@ -173,6 +202,24 @@ class EngineeringOrchestrator:
 
         bom_csv = generate_bom(bom_data)
 
+        # Copy the global BOM into the per-revision directory so that
+        # each revision is self-contained. generate_bom() writes to a
+        # single global path; this copy makes it auditable per-rev.
+        rev_bom_path = os.path.join(rev_dir, "bom.csv")
+        try:
+            shutil.copy2(bom_csv, rev_bom_path)
+        except Exception:
+            logger.exception("Could not copy BOM to revision dir; falling back to in-rev write")
+            # If the global file vanished, write the rows directly so
+            # the artifact still exists in the rev dir.
+            try:
+                with open(rev_bom_path, "w", encoding="utf-8") as f:
+                    f.write(bom_csv.read_text(encoding="utf-8")
+                            if hasattr(bom_csv, "read_text")
+                            else Path(bom_csv).read_text(encoding="utf-8"))
+            except Exception:
+                logger.exception("BOM persistence to revision dir failed entirely")
+
         total_mass = total_mass_from_bom_rows(bom_parts)
 
         logger.info(
@@ -186,6 +233,18 @@ class EngineeringOrchestrator:
             total_mass,
         )
         archive_revision(machine_name, revision_id, config, parent_info)
+
+        # Persist the evaluation as a JSON artifact in the revision
+        # directory. Before this, the evaluation only existed in the
+        # in-memory return value + the event bus, so historical
+        # revisions had no auditable evaluation record.
+        eval_path = os.path.join(rev_dir, "evaluation.json")
+        try:
+            with open(eval_path, "w", encoding="utf-8") as f:
+                json.dump(evaluation_result, f, indent=2, default=str)
+        except Exception:
+            logger.exception("Failed to write evaluation.json to revision dir")
+
         evaluation_payload = {
             "machine_name": machine_name,
             "revision_id": revision_id,

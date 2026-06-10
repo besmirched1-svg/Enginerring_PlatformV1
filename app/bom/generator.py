@@ -260,7 +260,7 @@ def generate_bom(bom_data: dict) -> Path:
     Backward-compat: a parts list without ``config`` falls back to per-part
     default geometry, so legacy callers still produce a valid spreadsheet.
     """
-    bom_dir = Path("outputs/BOM")
+    bom_dir = Path("outputs/bom")
     bom_dir.mkdir(parents=True, exist_ok=True)
     csv_path = bom_dir / "assembly_bom.csv"
 

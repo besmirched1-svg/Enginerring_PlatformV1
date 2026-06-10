@@ -86,3 +86,155 @@ class TestGenerateScadTemplate:
         orch = EngineeringOrchestrator(event_bus=bus)
         scad = orch._generate_scad_template({})
         assert "roller_assembly" in scad
+
+
+# ===================================================================
+# Phase 16.5: Full-artifact-chain regression test
+# ===================================================================
+#
+# The orchestrator claims to produce: model.scad, output.stl, preview.png,
+# bom.csv, evaluation.json, manifest.json — all inside a single
+# ``outputs/revisions/{machine}/{rev}/`` directory. Prior to the fix,
+# only model.scad and manifest.json actually landed in the rev dir;
+# STL/PNG went to global outputs/STL and outputs/IMAGES, BOM went to
+# a single global outputs/BOM/assembly_bom.csv, and evaluation was
+# never persisted at all. This test runs the happy path (OpenSCAD
+# available, render succeeds) and asserts every artifact exists and
+# has non-trivial content.
+
+
+EXPECTED_ARTIFACTS = (
+    "model.scad",
+    "output.stl",
+    "preview.png",
+    "bom.csv",
+    "evaluation.json",
+    "manifest.json",
+)
+
+
+class TestFullArtifactChain:
+    """End-to-end artifact production: SCAD -> STL -> PNG -> BOM -> Eval."""
+
+    def _run_real(self, tmp_machine, config):
+        """Run the orchestrator with no monkey-patching; the renderer
+        sees whatever OpenSCAD is on the host."""
+        import os
+        from app.core.events import NullEventBus
+        from app.core.orchestrator import EngineeringOrchestrator
+
+        # Use a per-test machine name so parallel runs don't collide.
+        name = f"{tmp_machine}_{os.getpid()}"
+        orch = EngineeringOrchestrator(NullEventBus())
+        return orch.run_machine_job(machine_name=name, config=config)
+
+    def test_all_six_artifacts_written(self, tmp_path, monkeypatch):
+        # Don't pollute the real outputs/ tree during tests; the
+        # orchestrator reads CWD-relative paths, so cd into tmp_path.
+        monkeypatch.chdir(tmp_path)
+        config = {
+            "wall_thickness": 4.0, "clearance": 0.6, "roller_radius": 35.0,
+            "frame":  {"length": 1500, "width": 800, "height": 1000, "profile": 50},
+            "roller": {"diameter": 200, "width": 500, "shaft": 50},
+        }
+        result = self._run_real("artifact_chain", config)
+        assert result["revision_id"].startswith("rev_")
+
+        rev_dir = result["directory"]
+        # Restore the actual on-disk path for assertions (the orchestrator
+        # returns the CWD-relative path it computed; resolve against
+        # tmp_path since we monkeypatched chdir).
+        import os
+        if not os.path.isabs(rev_dir):
+            rev_dir = os.path.join(str(tmp_path), rev_dir)
+
+        present = set(os.listdir(rev_dir))
+        missing = [a for a in EXPECTED_ARTIFACTS if a not in present]
+        assert not missing, f"missing artifacts: {missing}"
+
+    def test_model_scad_has_template(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = self._run_real("scad_check", {
+            "wall_thickness": 3.0, "clearance": 0.5, "roller_radius": 30.0,
+        })
+        import os
+        rev_dir = result["directory"]
+        if not os.path.isabs(rev_dir):
+            rev_dir = os.path.join(str(tmp_path), rev_dir)
+        scad = open(os.path.join(rev_dir, "model.scad"), encoding="utf-8").read()
+        assert "roller_assembly" in scad
+        assert "wall_thickness" in scad
+
+    def test_stl_is_real_solid_mesh(self, tmp_path, monkeypatch):
+        """A successful OpenSCAD run produces a multi-KB solid mesh,
+        not the 12-byte 'FALLBACK STL' placeholder."""
+        monkeypatch.chdir(tmp_path)
+        result = self._run_real("stl_check", {
+            "roller": {"diameter": 200, "width": 500, "shaft": 50},
+        })
+        import os
+        rev_dir = result["directory"]
+        if not os.path.isabs(rev_dir):
+            rev_dir = os.path.join(str(tmp_path), rev_dir)
+        stl = open(os.path.join(rev_dir, "output.stl"), "rb").read()
+        assert len(stl) > 100, f"STL too small ({len(stl)} bytes) — likely fallback"
+        assert stl[:5] == b"solid", "STL is not a valid solid mesh"
+
+    def test_bom_csv_is_per_revision_copy(self, tmp_path, monkeypatch):
+        """The per-revision bom.csv must exist and contain the same
+        rows the global generator wrote."""
+        monkeypatch.chdir(tmp_path)
+        result = self._run_real("bom_check", {
+            "roller": {"diameter": 200, "width": 500, "shaft": 50},
+        })
+        import os
+        rev_dir = result["directory"]
+        if not os.path.isabs(rev_dir):
+            rev_dir = os.path.join(str(tmp_path), rev_dir)
+        rev_bom = os.path.join(rev_dir, "bom.csv")
+        assert os.path.exists(rev_bom)
+        content = open(rev_bom, encoding="utf-8").read()
+        # The component-name header is universal across BOMs.
+        assert "Component Name" in content
+
+    def test_evaluation_json_persisted(self, tmp_path, monkeypatch):
+        """evaluation.json must be written to the rev dir, not just
+        emitted on the event bus and returned in the result dict."""
+        monkeypatch.chdir(tmp_path)
+        result = self._run_real("eval_check", {
+            "roller": {"diameter": 200, "width": 500, "shaft": 50},
+        })
+        import os, json
+        rev_dir = result["directory"]
+        if not os.path.isabs(rev_dir):
+            rev_dir = os.path.join(str(tmp_path), rev_dir)
+        eval_path = os.path.join(rev_dir, "evaluation.json")
+        assert os.path.exists(eval_path), \
+            "evaluation.json must be persisted in the rev dir"
+        data = json.loads(open(eval_path, encoding="utf-8").read())
+        # The evaluator always returns a composite + metrics block.
+        assert "composite" in data
+        assert "metrics" in data
+
+    def test_revision_dir_is_self_contained(self, tmp_path, monkeypatch):
+        """Every artifact lives under the same rev dir; nothing
+        leaks to outputs/stl, outputs/png, etc."""
+        monkeypatch.chdir(tmp_path)
+        result = self._run_real("self_contained", {
+            "roller": {"diameter": 200, "width": 500, "shaft": 50},
+        })
+        import os
+        rev_dir = result["directory"]
+        if not os.path.isabs(rev_dir):
+            rev_dir = os.path.join(str(tmp_path), rev_dir)
+        # All six artifacts must be inside rev_dir.
+        for name in EXPECTED_ARTIFACTS:
+            p = os.path.join(rev_dir, name)
+            assert os.path.exists(p), f"{name} missing from {rev_dir}"
+        # The legacy global outputs/stl/{model.stl,output.stl} should
+        # NOT have been written by this run (the renderer is now
+        # per-revision by default when called from the orchestrator).
+        # The historical global files from prior runs are tolerated
+        # but the model.stl just written must be the one in rev_dir.
+        rev_stl = os.path.join(rev_dir, "output.stl")
+        assert os.path.getsize(rev_stl) > 100

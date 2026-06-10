@@ -15,7 +15,7 @@ def import_dxf(file_path: Path):
     logger.info(f"Ingesting industrial 2D DXF vector profile drawing: {file_path}")
     
     # Establish output target directory matching paths structure
-    scad_dir = Path("outputs/SCAD")
+    scad_dir = Path("outputs/scad")
     scad_dir.mkdir(parents=True, exist_ok=True)
     out_scad_path = scad_dir / f"{file_path.stem}_profile.scad"
     

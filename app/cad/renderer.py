@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 from app.core.paths import STL_DIR, IMAGES_DIR, PREVIEW_DIR
 
@@ -34,18 +35,31 @@ def _resolve_openscad() -> str:
     )
 
 
-def _resolve_targets(scad_path: Path) -> tuple[Path, Path, bool]:
-    """Pick destination paths and whether this render is the main assembly."""
+def _resolve_targets(scad_path: Path, output_dir: Optional[Path] = None) -> tuple[Path, Path, bool]:
+    """Pick destination paths and whether this render is the main assembly.
+
+    If ``output_dir`` is provided, STL and PNG land there (per-revision
+    layout). Otherwise the legacy global layout under ``STL_DIR`` /
+    ``IMAGES_DIR`` is used. Per-revision renders are the correct path
+    for any build that goes through ``EngineeringOrchestrator``; the
+    global layout survives only for ad-hoc CLI renders of named files.
+    """
     is_assembly = scad_path.name == "assembly.scad"
+    if output_dir is None:
+        output_dir_stl = STL_DIR
+        output_dir_png = IMAGES_DIR
+    else:
+        output_dir_stl = output_dir
+        output_dir_png = output_dir
     if is_assembly:
         return (
-            STL_DIR / "assembly.stl",
-            IMAGES_DIR / "assembly.png",
+            output_dir_stl / "assembly.stl",
+            output_dir_png / "assembly.png",
             True,
         )
     return (
-        STL_DIR / f"{scad_path.stem}.stl",
-        IMAGES_DIR / f"{scad_path.stem}.png",
+        output_dir_stl / f"{scad_path.stem}.stl",
+        output_dir_png / f"{scad_path.stem}.png",
         False,
     )
 
@@ -84,10 +98,18 @@ def _run_openscad(cmd: list[str], timeout: int) -> None:
         logger.debug("OpenSCAD stderr: %s", result.stderr.strip())
 
 
-def render_stl(scad_path: Path, timeout: int = 120) -> dict:
+def render_stl(scad_path: Path, timeout: int = 120,
+              output_dir: Optional[Path] = None) -> dict:
+    """Render a SCAD file to STL (and PNG preview).
+
+    ``output_dir`` is the directory the STL and PNG land in. When None
+    (default), the legacy global ``STL_DIR`` / ``IMAGES_DIR`` is used;
+    pass an explicit directory (e.g. a per-revision dir) to keep
+    builds isolated.
+    """
     openscad_bin = _resolve_openscad()
 
-    stl_output, png_output, is_assembly = _resolve_targets(scad_path)
+    stl_output, png_output, is_assembly = _resolve_targets(scad_path, output_dir)
 
     # Ensure output folders exist before invoking OpenSCAD.
     stl_output.parent.mkdir(parents=True, exist_ok=True)
