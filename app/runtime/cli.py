@@ -946,6 +946,87 @@ def cmd_factory_predict_maintenance(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_factory_director_run(args: argparse.Namespace) -> int:
+    """Run the FactoryDirector over a plant spec (Phase 16.2).
+
+    The spec is JSON with the same shape as the PM spec, plus a
+    ``goal`` block::
+
+        {
+          "name": "hemp_line_1",
+          "target_throughput_kg_hr": 1500,
+          "feed_rate_kg_hr": 1500,
+          "planning_horizon_hours": 8760,
+          "prefer_maintenance": true,
+          "bearings": [...],
+          "shafts": [...]
+        }
+
+    Prints the plan + reliefs + dynamic constraints. Exits 0 on
+    success, 1 on pipeline failure.
+    """
+    import json
+    from pathlib import Path
+    from app.factory_director import (
+        FactoryDirector,
+        FactoryDirectorGoal,
+        reliefs_to_dynamic_constraints,
+    )
+
+    spec_path = Path(args.spec)
+    with spec_path.open("r", encoding="utf-8") as fh:
+        spec = json.load(fh)
+
+    goal = FactoryDirectorGoal(
+        name=spec.get("name", "plant"),
+        target_throughput_kg_hr=float(spec.get("target_throughput_kg_hr", 1000.0)),
+        feed_rate_kg_hr=float(spec.get("feed_rate_kg_hr", 1000.0)),
+        planning_horizon_hours=float(spec.get("planning_horizon_hours", 8760.0)),
+        prefer_maintenance=bool(spec.get("prefer_maintenance", True)),
+        bearing_specs=list(spec.get("bearings", []) or []),
+        shaft_specs=list(spec.get("shafts", []) or []),
+    )
+
+    result = FactoryDirector().run(goal)
+
+    print()
+    print("  Factory Director")
+    print("  " + "=" * 56)
+    print(f"  Plant:            {goal.name}")
+    print(f"  Success:          {result.success}")
+    print(f"  Time:             {result.total_time_seconds:.2f} s")
+    print(f"  Plan steps:       {result.plan.total_steps}")
+    print(f"  Maint. actions:   {len(result.maintenance_action_ids)}")
+    print(f"  Relief proposals: {len(result.bottleneck_reliefs)}")
+    print()
+    for log in result.stage_log:
+        print(f"    [{log['status']:>8s}] {log['stage']:<24s}  {log['detail']}")
+    if result.bottleneck_reliefs:
+        print()
+        print("  Relief proposals:")
+        for r in result.bottleneck_reliefs:
+            print(
+                f"    [{r.severity:>8s}] {r.action:<22s}  "
+                f"{r.bottleneck_unit_id}  "
+                f"({r.current_value:.0f} -> {r.proposed_value:.0f})"
+            )
+            if r.rationale:
+                print(f"             {r.rationale[:90]}")
+        dcs = reliefs_to_dynamic_constraints(result.bottleneck_reliefs)
+        if dcs:
+            print()
+            print("  Dynamic constraints (to feed per-machine director):")
+            for dc in dcs:
+                print(f"    {dc.parameter}  {dc.operator}  {dc.value}  ({dc.severity})")
+    if result.errors:
+        print()
+        print("  Errors:")
+        for e in result.errors:
+            print(f"    - {e}")
+    print()
+    return 0 if result.success else 1
+
+
 # ---------------------------------------------------------------------------
 # CLI: economics commands
 # ---------------------------------------------------------------------------
@@ -1487,6 +1568,9 @@ def main() -> int:
     pm_p = factory_sub.add_parser("predict-maintenance",
                                   help="Run predictive maintenance analysis (Phase 16.3)")
     pm_p.add_argument("--spec", required=True, help="Path to a JSON spec")
+    dir_p = factory_sub.add_parser("director-run",
+                                   help="Run the factory director over a plant spec (Phase 16.2)")
+    dir_p.add_argument("--spec", required=True, help="Path to a JSON spec")
 
     # economics
     econ_p = subparsers.add_parser("economics", help="Economic engineering commands")
@@ -1618,6 +1702,7 @@ def main() -> int:
             "layout": cmd_factory_layout,
             "optimize": cmd_factory_optimize,
             "predict-maintenance": cmd_factory_predict_maintenance,
+            "director-run": cmd_factory_director_run,
         }
         return factory_map.get(args.factory_cmd, lambda a: print("Unknown factory command"))(args)
     elif args.command == "economics":

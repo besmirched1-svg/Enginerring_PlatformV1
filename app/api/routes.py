@@ -1260,6 +1260,58 @@ def post_factory_predict_maintenance(req: PredictiveMaintenanceRequest):
 
 
 # =====================================================================
+# Factory Director API - Phase 16.2
+# =====================================================================
+#
+# POST /api/factory/director/run
+#     Body: FactoryDirectorGoal
+#     Returns: FactoryDirectorResult.to_dict() (plan, reliefs, dcs)
+# =====================================================================
+
+
+class FactoryDirectorGoalModel(BaseModel):
+    name: str = "plant"
+    target_throughput_kg_hr: float = 1000.0
+    feed_rate_kg_hr: float = 1000.0
+    planning_horizon_hours: float = 8760.0
+    prefer_maintenance: bool = True
+    bearings: List[BearingSpecModel] = []
+    shafts: List[ShaftSpecModel] = []
+
+
+@router.post("/factory/director/run", tags=["factory"])
+def post_factory_director_run(req: FactoryDirectorGoalModel):
+    """Run the FactoryDirector over a plant spec.
+
+    Composes mass/energy balance, bottleneck analysis, and predictive
+    maintenance into a single plant-level decision. Each relief
+    proposal is also surfaced as a DynamicConstraint that the next
+    per-machine director run can apply (closed loop).
+    """
+    from app.factory_director import (
+        FactoryDirector,
+        FactoryDirectorGoal,
+        reliefs_to_dynamic_constraints,
+    )
+
+    goal = FactoryDirectorGoal(
+        name=req.name,
+        target_throughput_kg_hr=req.target_throughput_kg_hr,
+        feed_rate_kg_hr=req.feed_rate_kg_hr,
+        planning_horizon_hours=req.planning_horizon_hours,
+        prefer_maintenance=req.prefer_maintenance,
+        bearing_specs=[b.model_dump() for b in req.bearings],
+        shaft_specs=[s.model_dump() for s in req.shafts],
+    )
+    result = FactoryDirector().run(goal)
+    d = result.to_dict()
+    d["dynamic_constraints"] = [
+        dc.to_dict() for dc in reliefs_to_dynamic_constraints(result.bottleneck_reliefs)
+    ]
+    return d
+
+
+# =====================================================================
 # Economic Engineering API - Phase 12
 # =====================================================================
 #

@@ -1054,3 +1054,335 @@ class TestPredictiveMaintenance:
         valid = {"low", "medium", "high", "critical"}
         for a in out["actions"]:
             assert a["severity"] in valid
+
+
+# ===================================================================
+# Phase 16.2: Factory Director
+# ===================================================================
+#
+# The director is a thin orchestrator over app.factory analyzers and
+# app.factory.predictive_maintenance. These tests verify the four-stage
+# pipeline, the closed-loop bridge to DynamicConstraint, and the
+# public API/CLI surface.
+
+
+_TEST_DIRECTOR_GOAL = {
+    "name": "hemp_line_1",
+    "target_throughput_kg_hr": 1500.0,
+    "feed_rate_kg_hr": 1500.0,
+    "planning_horizon_hours": 8760.0,
+    "prefer_maintenance": True,
+    "bearing_specs": [
+        {
+            "machine_id": "unit_a", "component": "drive_end",
+            "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+            "dynamic_load_rating": 35000, "static_load_rating": 25000,
+            "limiting_speed": 7500, "radial_load": 5000, "axial_load": 1000,
+            "speed": 1500, "elapsed_operating_hours": 600,
+        },
+        {
+            "machine_id": "unit_b", "component": "fan_end",
+            "bore_diameter": 40, "outer_diameter": 80, "width": 18,
+            "dynamic_load_rating": 25000, "static_load_rating": 18000,
+            "limiting_speed": 9000, "radial_load": 2000, "axial_load": 500,
+            "speed": 1800, "elapsed_operating_hours": 100,
+        },
+    ],
+    "shaft_specs": [
+        {
+            "machine_id": "unit_a", "component": "main_shaft",
+            "ultimate_tensile_strength": 600, "yield_strength": 400,
+            "stress_blocks": [[200, 0, 50000], [300, 0, 20000]],
+            "frequency": 2.0,
+        },
+    ],
+}
+
+
+class TestFactoryDirector:
+    def test_package_exports(self):
+        from app.factory_director import (
+            BottleneckRelief,
+            FactoryDirector,
+            FactoryDirectorGoal,
+            FactoryDirectorPlan,
+            FactoryDirectorResult,
+            FactoryDirectorStage,
+            FactoryPlanTask,
+            build_factory_graph,
+            generate_factory_plan,
+            reliefs_to_dynamic_constraints,
+        )
+        assert FactoryDirector is not None
+        assert FactoryDirectorGoal is not None
+
+    def test_goal_with_minimum_fields(self):
+        from app.factory_director import FactoryDirectorGoal
+        g = FactoryDirectorGoal()
+        assert g.target_throughput_kg_hr > 0
+
+    def test_generate_plan_has_four_stages(self):
+        from app.factory_director import (
+            FactoryDirectorGoal,
+            FactoryDirectorStage,
+            generate_factory_plan,
+        )
+        goal = FactoryDirectorGoal(bearing_specs=[_TEST_DIRECTOR_GOAL["bearing_specs"][0]])
+        plan = generate_factory_plan(goal)
+        assert plan.total_steps == 4
+        stages = [t.stage for t in plan.tasks]
+        assert FactoryDirectorStage.PLANNING in stages
+        assert FactoryDirectorStage.SIMULATION in stages
+        assert FactoryDirectorStage.PREDICTIVE_MAINTENANCE in stages
+        assert FactoryDirectorStage.BOTTLENECK_RELIEF in stages
+
+    def test_plan_stage_dependencies(self):
+        from app.factory_director import (
+            FactoryDirectorGoal,
+            generate_factory_plan,
+        )
+        plan = generate_factory_plan(FactoryDirectorGoal(bearing_specs=[
+            _TEST_DIRECTOR_GOAL["bearing_specs"][0]
+        ]))
+        relief = next(t for t in plan.tasks if t.task_id == "bottleneck_relief")
+        # relief depends on both simulate and predict_maintenance
+        assert "simulate" in relief.depends_on
+        assert "predict_maintenance" in relief.depends_on
+
+    def test_plan_warns_on_empty_goal(self):
+        from app.factory_director import FactoryDirectorGoal, generate_factory_plan
+        plan = generate_factory_plan(FactoryDirectorGoal())
+        assert any("no bearing" in n.lower() or "empty" in n.lower()
+                   for n in plan.notes)
+
+    def test_build_factory_graph_from_specs(self):
+        from app.factory_director import (
+            FactoryDirectorGoal, build_factory_graph,
+        )
+        goal = FactoryDirectorGoal(
+            target_throughput_kg_hr=1000.0,
+            bearing_specs=_TEST_DIRECTOR_GOAL["bearing_specs"],
+        )
+        g = build_factory_graph(goal)
+        assert len(g.units) == 2
+        # First unit has a feed stream
+        assert g.feed_streams
+        # Last unit has a product stream
+        assert g.product_streams
+
+    def test_director_runs_end_to_end(self):
+        from app.factory_director import (
+            FactoryDirector, FactoryDirectorGoal,
+        )
+        goal = FactoryDirectorGoal(
+            name="hemp_line_1",
+            target_throughput_kg_hr=1200.0,
+            feed_rate_kg_hr=1200.0,
+            planning_horizon_hours=8760.0,
+            prefer_maintenance=True,
+            bearing_specs=_TEST_DIRECTOR_GOAL["bearing_specs"],
+            shaft_specs=_TEST_DIRECTOR_GOAL["shaft_specs"],
+        )
+        result = FactoryDirector().run(goal)
+        assert result.success
+        assert result.plan.total_steps == 4
+        # Stage log records all four stages
+        stages = [log["stage"] for log in result.stage_log]
+        assert "planning" in stages
+        assert "simulation" in stages
+        assert "predictive_maintenance" in stages
+        assert "bottleneck_relief" in stages
+        assert "complete" in stages
+
+    def test_director_produces_maintenance_action_ids(self):
+        from app.factory_director import FactoryDirector, FactoryDirectorGoal
+        goal = FactoryDirectorGoal(
+            bearing_specs=_TEST_DIRECTOR_GOAL["bearing_specs"],
+            shaft_specs=_TEST_DIRECTOR_GOAL["shaft_specs"],
+        )
+        result = FactoryDirector().run(goal)
+        # At least one bearing is past 60% consumed (drive_end at ~80%)
+        # so the scheduler should produce >= 1 action.
+        assert result.maintenance_action_ids
+        assert all(isinstance(a, str) for a in result.maintenance_action_ids)
+
+    def test_director_proposes_relief_for_overloaded_line(self):
+        from app.factory_director import FactoryDirector, FactoryDirectorGoal
+        # Use a target rate that's well above the plant's effective
+        # capacity. The director should propose a relief.
+        goal = FactoryDirectorGoal(
+            target_throughput_kg_hr=5000.0,  # way over capacity
+            feed_rate_kg_hr=5000.0,
+            bearing_specs=_TEST_DIRECTOR_GOAL["bearing_specs"],
+        )
+        result = FactoryDirector().run(goal)
+        assert result.bottleneck_reliefs
+        # The relief action should be one of the recognized types
+        for r in result.bottleneck_reliefs:
+            assert r.action in (
+                "raise_capacity", "lower_target_rate",
+                "add_parallel_unit", "schedule_maintenance",
+            )
+
+    def test_director_no_bottleneck_no_relief(self):
+        from app.factory_director import FactoryDirector, FactoryDirectorGoal
+        # Empty plant -> no bottleneck -> no relief
+        result = FactoryDirector().run(FactoryDirectorGoal())
+        assert result.success
+        assert result.bottleneck_reliefs == []
+
+    def test_reliefs_to_dynamic_constraints(self):
+        from app.factory_director import (
+            BottleneckRelief, reliefs_to_dynamic_constraints,
+        )
+        reliefs = [
+            BottleneckRelief(
+                action_id="r1", bottleneck_unit_id="u1",
+                action="raise_capacity",
+                proposed_value=1500.0, severity="low",
+            ),
+            BottleneckRelief(
+                action_id="r2", bottleneck_unit_id="u2",
+                action="add_parallel_unit", severity="high",
+            ),
+            BottleneckRelief(
+                action_id="r3", bottleneck_unit_id="u3",
+                action="schedule_maintenance", severity="critical",
+            ),
+        ]
+        dcs = reliefs_to_dynamic_constraints(reliefs, machine_type="test_plant")
+        assert len(dcs) == 3
+        # raise_capacity -> min constraint on max_capacity_kg_hr
+        assert dcs[0].parameter == "units.u1.max_capacity_kg_hr"
+        assert dcs[0].operator == "min"
+        assert dcs[0].value == 1500.0
+        # add_parallel_unit -> eq constraint on consider_parallel
+        assert dcs[1].parameter == "units.u2.consider_parallel"
+        assert dcs[1].operator == "eq"
+        # schedule_maintenance -> eq constraint on retire_first
+        assert dcs[2].parameter == "units.u3.retire_first"
+
+    def test_reliefs_to_dynamic_constraints_ignores_unknown(self):
+        from app.factory_director import (
+            BottleneckRelief, reliefs_to_dynamic_constraints,
+        )
+        reliefs = [
+            BottleneckRelief(
+                action_id="r1", bottleneck_unit_id="u1",
+                action="unknown_action",
+            ),
+        ]
+        assert reliefs_to_dynamic_constraints(reliefs) == []
+
+    def test_director_captures_stage_errors(self):
+        from app.factory_director import (
+            FactoryDirector, FactoryDirectorGoal,
+        )
+        # A goal with a non-numeric spec field forces an exception
+        # inside the PM stage. The director should catch it and
+        # record the error without raising. Per-stage errors surface
+        # in result.errors and the stage_log, but success stays True
+        # because the rest of the pipeline completed.
+        bad = {"machine_id": "x", "component": "y",
+               "bore_diameter": "not-a-number",
+               "outer_diameter": 90, "width": 20,
+               "dynamic_load_rating": 35000, "static_load_rating": 25000,
+               "limiting_speed": 7500}
+        goal = FactoryDirectorGoal(bearing_specs=[bad])
+        result = FactoryDirector().run(goal)
+        assert any("PredictiveMaintenance" in e
+                   for e in result.errors) or any(
+            log["stage"] == "predictive_maintenance" and log["status"] == "failed"
+            for log in result.stage_log
+        )
+
+    def test_director_to_dict_shape(self):
+        from app.factory_director import FactoryDirector, FactoryDirectorGoal
+        result = FactoryDirector().run(FactoryDirectorGoal(
+            bearing_specs=_TEST_DIRECTOR_GOAL["bearing_specs"],
+        ))
+        d = result.to_dict()
+        assert "goal" in d
+        assert "plan" in d
+        assert "bottleneck_reliefs" in d
+        assert "stage_log" in d
+        assert "errors" in d
+        assert "success" in d
+
+    def test_director_uses_injected_analyzers(self):
+        from app.factory_director import FactoryDirector, FactoryDirectorGoal
+        from app.factory.predictive_maintenance import (
+            BearingHealthMonitor, MaintenanceScheduler, ShaftFatigueAccumulator,
+        )
+
+        class _FakeBearing:
+            l10h_hours = 5000.0
+            operating_temperature = 50.0
+            static_safety_factor = 3.0
+            passed = True
+            consumed_fraction = 0.5
+            severity = "medium"
+
+        class _FakeMonitor:
+            def estimate(self, **kwargs):
+                rec = _FakeBearing()
+                rec.machine_id = kwargs.get("machine_id", "")
+                rec.component = kwargs.get("component", "")
+                rec.remaining_hours = 5000.0 - float(kwargs.get("elapsed_operating_hours", 0))
+                rec.notes = []
+                return rec
+
+        class _FakeFatigue:
+            def accumulate(self, **kwargs):
+                from app.factory.predictive_maintenance import FatigueAccumulation
+                return FatigueAccumulation(
+                    machine_id=kwargs.get("machine_id", ""),
+                    component=kwargs.get("component", ""),
+                    damage_fraction=0.1, severity="low", stress_blocks=0,
+                )
+
+        goal = FactoryDirectorGoal(
+            bearing_specs=[_TEST_DIRECTOR_GOAL["bearing_specs"][0]],
+            shaft_specs=_TEST_DIRECTOR_GOAL["shaft_specs"],
+        )
+        result = FactoryDirector(
+            bearing_monitor=_FakeMonitor(),
+            fatigue_accumulator=_FakeFatigue(),
+        ).run(goal)
+        assert result.success
+
+    def test_cli_command_registered(self):
+        from app.runtime.cli import cmd_factory_director_run
+        assert callable(cmd_factory_director_run)
+
+    def test_api_route_registered(self):
+        from app.api.routes import router
+        paths = [r.path for r in router.routes]
+        assert "/factory/director/run" in paths
+
+    def test_api_round_trip(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+        client = TestClient(app)
+        r = client.post("/api/factory/director/run", json={
+            "name": "test_plant",
+            "target_throughput_kg_hr": 1200.0,
+            "feed_rate_kg_hr": 1200.0,
+            "planning_horizon_hours": 8760,
+            "prefer_maintenance": True,
+            "bearings": [{
+                "machine_id": "u1", "component": "drive_end",
+                "bore_diameter": 50, "outer_diameter": 90, "width": 20,
+                "dynamic_load_rating": 35000, "static_load_rating": 25000,
+                "limiting_speed": 7500, "radial_load": 5000, "axial_load": 1000,
+                "speed": 1500, "elapsed_operating_hours": 600,
+            }],
+            "shafts": [],
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert "success" in body
+        assert "bottleneck_reliefs" in body
+        assert "dynamic_constraints" in body
+        # The dynamic_constraints surface is the closed-loop seam.
+        assert isinstance(body["dynamic_constraints"], list)
