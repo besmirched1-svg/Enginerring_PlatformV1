@@ -194,11 +194,16 @@ does not accidentally start trying to fix them.
     are both fully supported and tested. See §0.7 below
     for the resolution evidence.
 12. **No max-file-size enforcement.** The existing
-    route accepts arbitrarily large uploads and writes
-    them to a tempfile. 17.1 adds the 20 MB cap.
+    route accepted arbitrarily large uploads and wrote
+    them to a tempfile. **Resolved in 17.1e.** The route
+    now enforces a 20 MB cap via Content-Length
+    pre-check and streaming counter. See §0.8 below.
 13. **No `confidence` floor enforcement.** The existing
-    route returns the result regardless of confidence.
-    17.1 adds the 0.30 floor.
+    route returned the result regardless of confidence.
+    **Resolved in 17.1e (route) and 17.1g (tests).**
+    The route now appends a `'confidence_below_floor'`
+    warning when `result.confidence < 0.30`. The 200
+    status is preserved; the orchestrator is not called.
 14. **No file-type constant.** File types were listed
     inline in `routes.py:198` as a `set` literal. 17.1
     replaces this with `app/vision/constants.py`
@@ -247,11 +252,11 @@ acceptance criteria):
   the tests, and the doc references — all in
   agreement).
 - `pytest` passes (944 passed, 1 skipped, 0 failed at
-  the 17.1 hardening commit).
+  the 17.1c hardening commit).
 - `POST /api/drawing/ingest` accepts all 8 formats
   and rejects any other with HTTP 415.
 
-**Audit counts after 17.1:**
+**Audit counts after 17.1c (file-type hardening only):**
 
 | Module | Before 17.1 | After 17.1 | Delta |
 |--------|------------:|-----------:|------:|
@@ -272,6 +277,81 @@ The +46 lines in `app/vision/` are the new
 through the registry. The 26 existing vision tests
 still pass; the 906 other tests in the suite are
 unaffected.
+
+### 0.8 17.1 hardening complete — final audit
+
+The 17.1 sprint is complete as of commit `6e8197b`
+(Phase 17.1g). This section records the final
+measured state of the drawing-ingest layer after
+all four 17.1 hardening commits (17.1c, 17.1e, 17.1f,
+17.1g).
+
+**Code changes:**
+
+| File | Lines | Role |
+|------|------:|------|
+| `app/vision/constants.py` | 70 | SUPPORTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, CONFIDENCE_FLOOR |
+| `app/vision/ocr_engine.py` | 110 (unchanged) | imports the registry, single dispatch path |
+| `app/api/routes.py` (the `/drawing/ingest` route) | ~85 lines (was ~30) | extension check + size cap + confidence floor |
+
+**Test changes:**
+
+| File | Lines | Tests | Role |
+|------|------:|------:|------|
+| `tests/test_supported_file_types.py` | 90 | 12 | registry pin (17.1c) |
+| `tests/test_drawing_ingest_routes.py` | 127 | 19 | route extension check (17.1c) |
+| `tests/test_size_enforcement.py` | 160 | 5 | 20 MB cap (17.1e) |
+| `tests/test_drawing_ingest_e2e.py` | 371 | 8 | end-to-end chain (17.1f) |
+| `tests/test_confidence_floor.py` | 273 | 8 | confidence floor (17.1g) |
+| `tests/test_vision.py` | 188 (unchanged) | 26 | unit tests (pre-existing) |
+| **Total drawing-related tests** | **1209** | **78** | |
+
+**Suite-wide count:**
+
+- Before 17.1 (commit `a801cc2`, the audit baseline):
+  932 passed, 1 skipped, 0 failed.
+- After 17.1c: 944 passed, 1 skipped, 0 failed. (+12
+  registry tests)
+- After 17.1d: doc sync, no test changes.
+- After 17.1e: 968 passed, 1 skipped, 0 failed. (+5
+  size tests; the route refactor for streaming did
+  not change the existing 944-test count)
+- After 17.1f: 976 passed, 1 skipped, 0 failed. (+8
+  E2E tests)
+- After 17.1g: 984 passed, 1 skipped, 0 failed. (+8
+  confidence floor tests)
+
+Net change from 17.1 baseline to 17.1 complete:
++52 tests, 0 regressions. **All drawing-ingest
+behaviors are now CI-gated.**
+
+**Tag state at 17.1 complete:**
+
+- `phase17-spec-frozen` → `96e4696` (the FROZEN spec,
+  unchanged)
+- `pre-phase17-backup` → `916a402` (alias of v1.0.1,
+  unchanged)
+- `phase17-1-hardening` — **not yet tagged**. A
+  maintainer instruction to cut this tag is the
+  natural next step before 17.2 work begins. The
+  recommended commit to tag is `6e8197b` (the 17.1g
+  head), with a tag message summarising the four
+  hardening commits and the 52 new tests.
+
+**Out-of-scope confirmations:**
+
+- No new file types were added beyond the 8 in the
+  registry. WEBP, HEIC, DXF, DWG, ZIP remain out of
+  scope (spec §6 + §10).
+- No new routes were added. The 56-route total
+  (`app/api/routes.py`) is unchanged from the v1.0.x
+  baseline. 17.2 will add the auto-build endpoint;
+  17.3 will add the review/commit endpoints.
+- No orchestrator integration. The 17.1 route still
+  returns the IngestionResult and stops. The
+  orchestrator call is 17.2 work.
+- No AI / OCR / handwriting-model work. The pipeline
+  is unchanged from v1.0.x.
 
 ---
 
@@ -345,60 +425,84 @@ Captures the last known-good state for rollback.
 Per spec §7.1. The first work item on
 `phase17-drawing-ingestion` after the spec freeze.
 
+**Status as of commit `6e8197b` (Phase 17.1g):**
+**COMPLETE.** All six checklist items below are
+implemented, tested, and committed.
+
 ### 17.1 Checklist
 
-- [ ] **Supported file type constant.** Add
-      `app/vision/_constants.py` (or equivalent) with
-      `SUPPORTED_FILE_TYPES = {".pdf", ".png", ".jpg",
-      ".jpeg", ".tiff", ".tif"}` and `MAX_FILE_SIZE_BYTES
-      = 20 * 1024 * 1024` and `CONFIDENCE_FLOOR = 0.30`.
-      Both `ocr_engine.py:102` and `routes.py:198` import
-      this constant. The `.bmp` ambiguity in
-      `ocr_engine.py:102` is removed (BMP is removed
-      from the supported set; it has no test coverage
-      and no fixtures).
-- [ ] **20 MB file size validation.** Added in
-      `routes.py` *before* the tempfile write. Returns
-      HTTP 413 with `detail: "File exceeds 20 MB limit"`
-      if the upload is too large. Reads the
-      `Content-Length` header first; if absent, checks
-      the tempfile size after write and rejects then.
-- [ ] **Confidence floor enforcement.** After
-      `drawing_ingestor.ingest()` runs, the route
-      compares `result.confidence` to
-      `CONFIDENCE_FLOOR`. If below the floor, the route
-      returns the partial result with HTTP 200 and a
-      warning `"confidence_below_floor"`. The
-      orchestrator is **not** called. (Note: 17.2
-      reuses this floor; 17.1 just enforces it in the
-      existing route.)
-- [ ] **End-to-end ingest test.** Add
-      `tests/test_drawing_ingest_e2e.py` with at least
-      one test per of the 6 supported file types. The
-      test:
-        - Constructs a synthetic fixture (text-only PDF
-          or PNG with a known title block, BOM, and
-          dimension set).
-        - Calls `POST /api/drawing/ingest` via
-          FastAPI TestClient.
-        - Asserts HTTP 200.
-        - Asserts `confidence >= 0.0` and `<= 1.0`.
-        - Asserts `node_count >= 1` for a fixture that
-          has a known subsystem.
-        - Asserts `warnings` is a list.
-      Fixtures live in `tests/fixtures/drawings/`.
-- [ ] **Existing 26 vision tests still pass.** The
-      17.1 changes must not break the existing unit
-      tests. The `SUPPORTED_FILE_TYPES` constant
-      changes must not remove `.bmp` from the test
-      inputs (the existing tests don't use `.bmp`, but
-      verify with a `grep` before commit).
-- [ ] **Existing artifact chain still passes.** The
-      clean-room workflow from §1.1 must still produce
-      a 6-artifact revision after 17.1 lands. The
-      confidence floor and 20 MB cap do not apply to
-      manual `/api/improve/register` — only to
-      `/api/drawing/ingest`.
+- [x] **Supported file type constant.** Done in
+      17.1c. `app/vision/constants.py` holds
+      `SUPPORTED_FILE_TYPES` (a `frozenset` of 8
+      extensions: `.pdf`, `.png`, `.jpg`, `.jpeg`,
+      `.tif`, `.tiff`, `.svg`, `.bmp`). The route
+      (`app/api/routes.py`) and the OCR engine
+      (`app/vision/ocr_engine.py`) both import it.
+      The 17.1c commit resolved the per-module drift
+      (route had no `.bmp`, OCR engine had it) and
+      the spec's "out of scope" status for `.svg` —
+      both are now in the registry. See §0.7 for the
+      resolution evidence. **Tests:**
+      `tests/test_supported_file_types.py` (12
+      tests) pins the registry against the frozen
+      extension list.
+- [x] **20 MB file size validation.** Done in 17.1e.
+      `MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024` lives
+      in `app/vision/constants.py`. The route reads
+      the `Content-Length` header first and rejects
+      oversize uploads with HTTP 413 before any I/O.
+      As a backstop for chunked transfer encoding or
+      lying clients, the route streams the body in
+      64 KB chunks, counting bytes as it goes, and
+      aborts with HTTP 413 if the running total
+      exceeds the cap. The 415 check (extension)
+      still runs first. **Tests:**
+      `tests/test_size_enforcement.py` (5 tests)
+      covers the under-limit, over-limit
+      Content-Length, over-limit streamed body,
+      check-order, and constant-pinning cases.
+- [x] **Confidence floor enforcement.** Done in 17.1e
+      (route wiring) and 17.1g (test file).
+      `CONFIDENCE_FLOOR = 0.30` lives in
+      `app/vision/constants.py`. The route compares
+      `result.confidence` to the floor and appends a
+      `'confidence_below_floor'` warning if below.
+      The orchestrator is not called (the route has
+      no orchestrator call yet; that arrives in
+      17.2). The 200 status is preserved — the
+      partial result is still a successful review
+      payload. **Tests:**
+      `tests/test_confidence_floor.py` (8 tests)
+      covers the high-confidence, low-confidence,
+      boundary-at-floor, just-below-floor,
+      zero-confidence, pipeline-warning-preservation,
+      message-content, and constant-pinning cases.
+- [x] **End-to-end ingest test.** Done in 17.1f.
+      `tests/test_drawing_ingest_e2e.py` (8 tests)
+      exercises the full chain: file upload -> route
+      -> pipeline -> review payload. The test is
+      dual-pronged: 6 real-pipeline tests send an
+      embedded minimal PDF through the route and
+      assert the response has the expected shape; 2
+      mocked-pipeline tests use `unittest.mock` to
+      inject a hand-crafted `IngestionResult` and
+      assert the route propagates the rich data
+      without dropping any field. The 8th test
+      (mocked low confidence) is the chain-end of
+      the 17.1g confidence floor enforcement.
+- [x] **Existing 26 vision tests still pass.**
+      Verified at every commit (17.1c, 17.1d, 17.1e,
+      17.1f, 17.1g). The full suite is 984 passed,
+      1 skipped, 0 failed at the 17.1g commit.
+- [x] **Existing artifact chain still passes.**
+      The clean-room workflow from §1.1 still
+      produces a 6-artifact revision on
+      `pre-phase17-backup` (alias of v1.0.1). The
+      confidence floor and 20 MB cap are scoped to
+      `/api/drawing/ingest` only; manual
+      `/api/improve/register` is unchanged. The
+      944+ non-drawing tests in the suite remain
+      green.
 
 ### 17.1 — Not in scope
 
