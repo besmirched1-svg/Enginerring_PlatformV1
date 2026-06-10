@@ -777,24 +777,97 @@ as the file structure holds.
 
 ## 4. 17.3 — Review Before Commit (mandatory, the default)
 
-Per spec §7.3. **Not started.** Placeholder for the
-sub-phase after 17.2.
+Per spec §7.3. **Complete** (9 commits, 17.1h → 9/N).
+The review-then-commit flow is the only path that
+promotes a champion from a drawing-ingested build.
 
-### 17.3 Checklist (to be activated when 17.2 lands)
+**The semantic transition of Phase 17.3:**
 
-- [ ] `POST /api/drawing/ingest` returns 200 with an
+    pre-17.3:  completed == promotable   (implicit)
+    post-17.3: completed != promotable   (explicit)
+
+The single enforcement boundary is
+`app/core/promotion_gate.py::promotion_allowed`. Every
+call to the orchestrator's `set_new_champion` funnels
+through it. A successful build is **not** promotable
+by itself — promotion requires the review state to
+be `APPROVED` **and** an explicit `commit_requested`
+signal carried in the `RevisionIntent`.
+
+**The endpoints (all gated by the new state machine):**
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/drawing/ingest` | Issue `ingestion_id`, persist snapshot. **No** orchestrator call. |
+| `GET`  | `/api/drawing/ingest/{id}` | Read the stored IngestionResult + review state. |
+| `POST` | `/api/drawing/ingest/{id}/approve` | Walk the review state (DRAFT → PENDING_REVIEW → APPROVED). |
+| `PATCH`| `/api/drawing/ingest/{id}/graph` | Operator-initiated graph edit. Append-only history. |
+| `POST` | `/api/drawing/ingest/{id}/commit` | The **only** path that promotes. Requires APPROVED state. |
+
+**The state machine (in `app/vision/review_state.py`):**
+
+    DRAFT          -> PENDING_REVIEW
+    PENDING_REVIEW -> APPROVED
+    PENDING_REVIEW -> REJECTED
+    APPROVED       -> PROMOTED   (only via promotion_gate)
+    APPROVED       -> REJECTED   (operator retracts approval)
+
+`REJECTED` and `PROMOTED` are terminal. The gate is
+the first line of defense; the state machine is
+defense in depth.
+
+**The 17.3 commits (in order):**
+
+1. **17.3 (1a/N)** — `ReviewState` state machine.
+2. **17.3 (1b/N)** — `RevisionIntent` + `intent_adapter`.
+3. **17.3 (1c/N)** — `promotion_gate.py`.
+4. **17.3 (1d/N)** — Orchestrator integration with the gate.
+5. **17.3 (2/N)**  — `IngestionResult` + `ReviewState` persistence.
+6. **17.3 (3/N)**  — `/approve` endpoint.
+7. **17.3 (4/N)**  — `/commit` endpoint.
+8. **17.3 (5/N)**  — `/drawing/ingest` issues `ingestion_id`.
+9. **17.3 (6/N)**  — PATCH `/graph` endpoint.
+10. **17.3 (7/N)** — `/api/improve/register` migrated to opt-in.
+11. **17.3 (8/N)** — `/drawing/ingest-and-build` refactored to use `intent_adapter`.
+12. **17.3 (9/N)** — Integration acceptance test (cross-boundary).
+
+**Test coverage:** 6 new test files (`test_review_state.py`,
+`test_revision_intent.py`, `test_promotion_gate.py`,
+`test_ingestion_storage.py`, `test_approve_route.py`,
+`test_commit_route.py`, `test_patch_graph_route.py`,
+`test_ingestion_id_issuance.py`, `test_phase17_3_integration.py`)
+totalling ~190 tests, all green. 1263 platform tests
+pass with zero regressions.
+
+### 17.3 Checklist (DONE)
+
+- [x] `POST /api/drawing/ingest` returns 200 with an
       `ingestion_id`. **No** orchestrator call.
-- [ ] `GET /api/drawing/ingest/{ingestion_id}` returns
+- [x] `GET /api/drawing/ingest/{ingestion_id}` returns
       the stored IngestionResult.
-- [ ] `PATCH /api/drawing/ingest/{ingestion_id}/graph`
+- [x] `PATCH /api/drawing/ingest/{ingestion_id}/graph`
       accepts graph edits.
-- [ ] `POST /api/drawing/ingest/{ingestion_id}/commit`
+- [x] `POST /api/drawing/ingest/{ingestion_id}/commit`
       is the **only** path that creates a revision from
       a drawing.
-- [ ] Low-confidence extractions (`confidence < 0.30`)
+- [x] Low-confidence extractions (`confidence < 0.30`)
       cannot be committed via the auto route.
-- [ ] The review flow is the default. Auto-build (17.2)
+- [x] The review flow is the default. Auto-build (17.2)
       is opt-in.
+- [x] The `promotion_gate.promotion_allowed` function
+      is the single enforcement boundary. Test coverage
+      includes the full truth table.
+- [x] Legacy `/api/improve/register` callers cannot
+      silently promote a champion (auto_promote=False).
+- [x] Cross-boundary integration test exercises the
+      full four-step flow end-to-end.
+
+**Out of scope for 17.3 (deferred to 17.6):**
+
+- Cross-platform champion-pointer lock + audit log.
+- Rate limiting on drawing ingest routes.
+- Input-injection audit on vision pipeline.
+- Audit log for every ingestion event.
 
 ---
 

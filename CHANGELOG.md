@@ -10,6 +10,168 @@ same scheme (e.g. ``v1.0.0-rc1``).
 
 ---
 
+## [Unreleased] — Phase 17.3 — "Review Before Commit"
+
+Phase 17.3 is the **review-then-commit** sprint. The
+drawing-ingest flow gains an explicit governance step
+between the build and the champion promotion. The single
+enforcement boundary is
+`app/core/promotion_gate.py::promotion_allowed`. The
+**semantic transition**:
+
+    pre-17.3:  completed == promotable   (implicit)
+    post-17.3: completed != promotable   (explicit)
+
+A successful build is **not** promotable by itself.
+Promotion requires the review state to be `APPROVED`
+**and** an explicit `commit_requested` signal carried in
+the `RevisionIntent`.
+
+### Added
+
+- **`POST /api/drawing/ingest`** — now returns an
+  `ingestion_id` (uuid4 hex) and a `graph_hash`
+  (sha256 of the canonical graph dict). The snapshot
+  is persisted to the `IngestionStore` so the
+  ingestion survives across requests and is auditable.
+  No orchestrator call. Pinned by
+  `test_ingestion_id_issuance.py`.
+- **`GET /api/drawing/ingest/{ingestion_id}`** — read
+  the stored `IngestionResult` plus current review
+  state. The operator's first stop after upload.
+- **`POST /api/drawing/ingest/{ingestion_id}/approve`**
+  — the explicit review-state transition endpoint.
+  Walks the state from `DRAFT` to `PENDING_REVIEW` to
+  `APPROVED` (or to `REJECTED`). 200 on success; 409
+  with `legal_next_states` on illegal transitions.
+  Pinned by `test_approve_route.py` (15 tests).
+- **`PATCH /api/drawing/ingest/{ingestion_id}/graph`**
+  — the operator's edit point. Append-only history:
+  the prior snapshot is preserved, the new graph
+  replaces the in-effect one. 409 on terminal state
+  (REJECTED, PROMOTED). Pinned by
+  `test_patch_graph_route.py` (10 tests).
+- **`POST /api/drawing/ingest/{ingestion_id}/commit`**
+  — the **only** path that promotes a champion from
+  a drawing-ingested build. Requires `APPROVED` review
+  state. Returns the orchestrator's `promotion_mode`
+  so the operator can see why a build completed
+  without promoting. Pinned by `test_commit_route.py`
+  (10 tests).
+- **`app/vision/review_state.py`** — the state machine
+  contract. Five states (`DRAFT`, `PENDING_REVIEW`,
+  `APPROVED`, `REJECTED`, `PROMOTED`) and the legal-
+  transition table. Terminal states (REJECTED,
+  PROMOTED) admit no outgoing transitions.
+- **`app/vision/review_store.py`** — NDJSON storage
+  layer with per-ingestion threading locks and TOCTOU-
+  safe read-validate-write. Append-only; the audit
+  trail is the on-disk file.
+- **`app/vision/ingestion_store.py`** — the persistent
+  record of the ingestion's snapshot, patches, and
+  terminal COMMIT record. The /commit route reads
+  from it; the /commit route writes a terminal
+  record to it.
+- **`app/vision/revision_intent.py`** — the soft signal.
+  A frozen dataclass carrying `commit_requested`,
+  `review_state`, `intent_source`, `ingestion_id`,
+  `actor`. Orchestration metadata, not execution
+  prerequisite.
+- **`app/vision/intent_adapter.py`** — the only
+  legitimate constructor of `RevisionIntent`. Takes
+  an `IntentRequestContext` and returns a
+  `RevisionIntent`. Pure function.
+- **`app/core/promotion_gate.py`** — the single
+  enforcement boundary. `promotion_allowed(intent,
+  auto_promote)` returns the boolean that gates
+  `set_new_champion`. `explain_decision` returns a
+  structured explanation for the route layer's
+  409 responses. Pure function, no I/O, no state.
+
+### Changed
+
+- **Orchestrator return shape** — the
+  `promotion_mode` field gains a fifth value:
+  `rejected_by_governance`. Set when the gate refused
+  the call. Existing four values (`disabled`,
+  `no_prior_champion`, `below_threshold`,
+  `attempted`) are unchanged.
+- **Orchestrator kwargs** — `run_machine_job` now
+  accepts `revision_intent: Optional[RevisionIntent] =
+  None` as an additive kwarg. Defaults preserve
+  pre-17.3 behavior byte-equivalent. The orchestrator
+  synthesizes a `LEGACY` intent from `auto_promote`
+  when the kwarg is absent.
+- **`POST /api/drawing/ingest-and-build`** —
+  refactored to use the `intent_adapter`. The route
+  now issues an `ingestion_id`, walks the review
+  state to `APPROVED`, builds a `RevisionIntent` with
+  `intent_source=AUTO_BUILD`, and calls the
+  orchestrator with `auto_promote=True` +
+  `revision_intent`. The 17.2a three-gate design
+  (commit flag, env var, confidence floor) is
+  preserved.
+- **`POST /api/improve/register`** — legacy callers
+  now pass `auto_promote=False`. A successful build
+  no longer implies a champion promotion. The
+  response carries `promotion_mode="disabled"` so
+  the caller can see the build completed without
+  promoting. The /commit route is the only path
+  that promotes.
+
+### Governance
+
+The post-17.3 governance statement:
+
+> Drawing-ingested builds may complete execution and
+> produce a revision, but they must not promote a
+> champion until the operator has explicitly approved
+> the ingestion and called the /commit endpoint. The
+> promotion_gate is the single enforcement boundary.
+
+This is enforced at three layers: (1) the route layer
+refuses the /commit call if the review state is not
+APPROVED; (2) the gate refuses the orchestrator's
+promotion block if the intent is not AUTHORIZED; (3)
+the state machine refuses the PROMOTED transition from
+any state except APPROVED.
+
+### Fixed
+
+None. 17.3 is additive on top of the 17.2a additive
+extension. Pre-17.2a behavior is preserved byte-
+equivalent for callers that do not pass
+`revision_intent`.
+
+### Tests
+
+- **1263 tests passing**, 2 skipped (synthetic-PNG
+  ingest tests; the OCR pipeline is exercised in
+  the e2e test file), 0 failures at the 17.3 head.
+- 9 new test files (~190 new tests total):
+  `test_review_state.py`, `test_revision_intent.py`,
+  `test_promotion_gate.py`, `test_ingestion_storage.py`,
+  `test_approve_route.py`, `test_commit_route.py`,
+  `test_patch_graph_route.py`,
+  `test_ingestion_id_issuance.py`,
+  `test_phase17_3_integration.py` (the cross-boundary
+  integration acceptance test).
+
+### Documentation
+
+- `CHANGELOG.md` — this entry.
+- `docs/API_REFERENCE.md` — four new endpoints
+  documented: `GET /api/drawing/ingest/{id}`,
+  `POST /api/drawing/ingest/{id}/approve`,
+  `PATCH /api/drawing/ingest/{id}/graph`,
+  `POST /api/drawing/ingest/{id}/commit`.
+- `docs/PHASE17_EXECUTION_CHECKLIST.md` — §4 17.3
+  checklist flipped to DONE; semantic transition
+  recorded; 12 commit log; out-of-scope list.
+- `docs/PHASE17_SPEC.md` — **untouched** (FROZEN).
+
+---
+
 ## [Unreleased] — Phase 17.2a — "Drawing Ingest → Build Integration"
 
 Phase 17.2a is an **integration milestone**, not a capability

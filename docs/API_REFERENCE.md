@@ -95,7 +95,11 @@ for orchestrator probe configuration.
 | POST | `/api/reasoning/strategy` | High-level reasoning strategy |
 | POST | `/api/research/ingest` | Ingest external research data |
 | POST | `/api/research/graph` | Build a research knowledge graph |
-| POST | `/api/drawing/ingest` | Ingest an engineering drawing (Phase 17; accepts `.pdf .png .jpg .jpeg .tif .tiff .svg .bmp`; rejects others with HTTP 415) |
+| POST | `/api/drawing/ingest` | Ingest an engineering drawing (Phase 17; accepts `.pdf .png .jpg .jpeg .tif .tiff .svg .bmp`; rejects others with HTTP 415). Returns 200 with `ingestion_id` and `graph_hash`. No orchestrator call. |
+| GET  | `/api/drawing/ingest/{ingestion_id}` | Read the stored IngestionResult + review state. |
+| POST | `/api/drawing/ingest/{ingestion_id}/approve` | Walk the review state (DRAFT → PENDING_REVIEW → APPROVED, or → REJECTED). |
+| PATCH | `/api/drawing/ingest/{ingestion_id}/graph` | Operator-initiated graph edit. Append-only history. |
+| POST | `/api/drawing/ingest/{ingestion_id}/commit` | The **only** path that promotes a champion from a drawing-ingested build. Requires APPROVED review state. |
 | POST | `/api/factory/simulate` | Run plant mass + energy + bottleneck analysis |
 | POST | `/api/factory/layout` | Auto equipment layout |
 | POST | `/api/factory/optimize` | Multi-objective factory optimization (background) |
