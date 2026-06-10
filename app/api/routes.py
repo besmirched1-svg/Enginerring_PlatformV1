@@ -5,7 +5,7 @@ import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
@@ -186,15 +186,21 @@ def download_model_stl(machine_name: str, revision_id: str):
 
 from fastapi import UploadFile, File as FastAPIFile
 import tempfile
-import shutil
 
 @router.post("/drawing/ingest")
-async def ingest_drawing(file: UploadFile = FastAPIFile(...)):
+async def ingest_drawing(
+    request: Request,
+    file: UploadFile = FastAPIFile(...),
+):
     """
     Ingest an engineering drawing (PDF or image) and return a
     reconstructed MachineGraph + YAML config.
     """
-    from app.vision.constants import SUPPORTED_FILE_TYPES
+    from app.vision.constants import (
+        CONFIDENCE_FLOOR,
+        MAX_FILE_SIZE_BYTES,
+        SUPPORTED_FILE_TYPES,
+    )
     suffix = "." + (file.filename or "upload").rsplit(".", 1)[-1].lower()
     if suffix not in SUPPORTED_FILE_TYPES:
         raise HTTPException(
@@ -205,14 +211,74 @@ async def ingest_drawing(file: UploadFile = FastAPIFile(...)):
             ),
         )
 
+    # Pre-check Content-Length header (cheap, rejects obvious
+    # oversize uploads before any I/O). If the client sent
+    # a Content-Length and it exceeds the cap, reject early.
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError:
+            declared_size = None
+        if declared_size is not None and declared_size > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"File exceeds {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB "
+                    f"limit ({declared_size} bytes declared)."
+                ),
+            )
+
+    # Stream the upload to a tempfile, counting bytes as we
+    # go. If the running total exceeds the cap, abort and
+    # reject with HTTP 413. This is the backstop for clients
+    # that don't send Content-Length (chunked transfer
+    # encoding, or lying clients).
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        shutil.copyfileobj(file.file, tmp)
+        bytes_written = 0
+        chunk_size = 64 * 1024
+        try:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > MAX_FILE_SIZE_BYTES:
+                    tmp.close()
+                    try:
+                        os.remove(tmp.name)
+                    except OSError:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"File exceeds "
+                            f"{MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB "
+                            f"limit (>{bytes_written} bytes streamed)."
+                        ),
+                    )
+                tmp.write(chunk)
+        finally:
+            await file.close()
         tmp_path = tmp.name
 
     try:
         from app.vision.drawing_ingestor import ingest
         from pathlib import Path
         result = ingest(Path(tmp_path))
+        # Confidence floor enforcement. If the result's
+        # overall confidence is below the floor, append a
+        # warning and return the partial result with HTTP
+        # 200. The orchestrator is not called (there is no
+        # orchestrator call in this route — that arrives
+        # in 17.2). The warning is appended regardless of
+        # any warnings the pipeline already emitted.
+        warnings = list(result.warnings)
+        if result.confidence < CONFIDENCE_FLOOR:
+            warnings.append(
+                f"confidence_below_floor: result.confidence="
+                f"{result.confidence:.3f} < {CONFIDENCE_FLOOR}"
+            )
         return {
             "status": "ok",
             "machine_name": result.graph.name,
@@ -225,7 +291,7 @@ async def ingest_drawing(file: UploadFile = FastAPIFile(...)):
             "dimensions_found": len(result.dimensions),
             "yaml_config": result.yaml_config,
             "graph": result.graph.to_dict(),
-            "warnings": result.warnings,
+            "warnings": warnings,
         }
     except Exception as exc:
         logger.error("Drawing ingestion failed: %s", exc)
