@@ -26,7 +26,7 @@ If you don't know which to pick, **pick A**.
 ### 1. Get the source
 
 ```bash
-git clone https://github.com/besmirched1-svg/Enginerring_PlatformV1.git openscad-platform
+git clone https://gitlab.com/sheepleunite-group/your-repo.git openscad-platform
 cd openscad-platform
 git checkout v1.0.0
 ```
@@ -122,7 +122,7 @@ and your `smoke_test` revision will still be there.
 ### 2. Get the source
 
 ```bash
-git clone https://github.com/besmirched1-svg/Enginerring_PlatformV1.git openscad-platform
+git clone https://gitlab.com/sheepleunite-group/your-repo.git openscad-platform
 cd openscad-platform
 git checkout v1.0.0
 ```
@@ -239,6 +239,6 @@ The whole pipeline ran in **~1.2 seconds** end-to-end.
 2. Read the [TROUBLESHOOTING.md](TROUBLESHOOTING.md) entry
    for your symptom.
 3. File a bug at
-   <https://github.com/besmirched1-svg/Enginerring_PlatformV1/issues>
+   <https://gitlab.com/sheepleunite-group/your-repo/-/issues>
    with the output of `/api/health` and the command that
    failed.

@@ -60,7 +60,7 @@ need either.
 ### 3.1 Get the source and check out the release
 
 ```bash
-git clone https://github.com/besmirched1-svg/Enginerring_PlatformV1.git openscad-platform
+git clone https://gitlab.com/sheepleunite-group/your-repo.git openscad-platform
 cd openscad-platform
 git checkout v1.0.0
 ```
