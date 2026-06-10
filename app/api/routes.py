@@ -248,6 +248,232 @@ async def ingest_drawing(
             pass
 
 
+# =====================================================================
+# Phase 17.2a — /api/drawing/ingest-and-build (opt-in auto-build)
+# =====================================================================
+#
+# POST /api/drawing/ingest-and-build
+#     Multipart body: same as /drawing/ingest (a file in the
+#     ``file`` field).
+#     Query: commit=true (required to proceed to the orchestrator).
+#
+#     This route closes the loop from drawing upload to revision
+#     creation in a single POST. It is OPT-IN — three independent
+#     gates must all be satisfied for the orchestrator to be called:
+#
+#       1. commit=true  (per-request opt-in, defaults to false)
+#       2. DRAWING_AUTO_BUILD_ENABLED=1
+#          (env-var global opt-in, defaults to "0")
+#       3. confidence >= CONFIDENCE_FLOOR (0.30, per spec §7.3)
+#
+#     If any gate fails, the route returns 200 with the full
+#     IngestionResult plus a ``commit_skipped`` field explaining
+#     which gate blocked. No orchestrator call is made, no
+#     revision is created. This matches the spec §7 ordering
+#     (review-before-commit is the default; auto-build is the
+#     exception, not the rule).
+#
+#     When all three gates pass, the route:
+#       - Builds an ``ingestion_path`` dict
+#         ({source_file, ocr_confidence, graph_hash}) for the
+#         manifest extension added in Commit 1.
+#       - Projects the MachineGraph into the orchestrator's
+#         config shape via
+#         ``app.vision.orchestrator_adapter.graph_to_orchestrator_config``.
+#       - Calls ``orchestrator.run_machine_job(config=...,
+#         ingestion_path=..., auto_promote=False)``. The
+#         ``auto_promote=False`` flag is the governance
+#         guarantee (Commit 3a.5): the drawing-ingested build
+#         is constitutionally incapable of promoting a champion.
+#         Champion lineage remains under explicit engineering
+#         control.
+#       - Returns 200 with the IngestionResult plus the
+#         orchestrator's result, including the new
+#         ``promotion_mode`` field ("disabled" by construction).
+# =====================================================================
+
+
+@router.post("/drawing/ingest-and-build")
+async def ingest_drawing_and_build(
+    request: Request,
+    file: UploadFile = FastAPIFile(...),
+    commit: bool = False,
+):
+    """
+    Ingest a drawing AND build a revision in a single call.
+
+    Opt-in only. Requires ``commit=true`` AND the
+    ``DRAWING_AUTO_BUILD_ENABLED`` environment variable set to
+    ``"1"``. Below the confidence floor the orchestrator is not
+    called even when both opt-ins are set, per spec §7.3.
+
+    Governance: this route never promotes a champion. The
+    orchestrator is called with ``auto_promote=False`` so the
+    promotion block is skipped entirely. Champion lineage
+    remains under explicit engineering lifecycle control.
+    """
+    import hashlib
+    from app.vision.constants import CONFIDENCE_FLOOR
+    from app.vision.upload_validation import validate_and_stage_upload
+
+    staged = await validate_and_stage_upload(request, file)
+    tmp_path = staged.tmp_path
+
+    try:
+        from pathlib import Path
+        from app.vision.drawing_ingestor import ingest
+        from app.vision.orchestrator_adapter import (
+            graph_to_orchestrator_config,
+        )
+
+        result = ingest(Path(tmp_path))
+        source_file = file.filename or "upload"
+
+        # ----- Build the standard ingestion response ----------
+        # Same shape as /drawing/ingest (Phase 17.1 contract).
+        warnings = list(result.warnings)
+
+        # Confidence floor: per spec §7.3, low-confidence
+        # extractions cannot be auto-committed. We do NOT
+        # raise here — the operator still gets the
+        # IngestionResult back so they can either (a)
+        # review the graph, (b) edit and re-submit, or
+        # (c) explicitly accept the low confidence via
+        # the review-before-commit flow in 17.3.
+        if result.confidence < CONFIDENCE_FLOOR:
+            warnings.append(
+                f"confidence_below_floor: result.confidence="
+                f"{result.confidence:.3f} < {CONFIDENCE_FLOOR}"
+            )
+
+        base_response: Dict[str, Any] = {
+            "status": "ok",
+            "machine_name": result.graph.name,
+            "revision": result.graph.revision,
+            "confidence": result.confidence,
+            "node_count": len(result.graph.nodes),
+            "edge_count": len(result.graph.edges),
+            "title_block": result.title_block,
+            "bom_rows": result.bom_rows,
+            "dimensions_found": len(result.dimensions),
+            "yaml_config": result.yaml_config,
+            "graph": result.graph.to_dict(),
+            "warnings": warnings,
+        }
+
+        # ----- Gate 1: per-request opt-in ---------------------
+        if not commit:
+            base_response["commit_skipped"] = (
+                "commit query param not set to true; "
+                "per-request opt-in required for auto-build."
+            )
+            return base_response
+
+        # ----- Gate 2: global env-var opt-in ------------------
+        # Per spec §17.2 the route is "off by default". The
+        # env var is the global kill-switch the operator
+        # uses to disable auto-build across the platform.
+        # Inline ``os.environ.get`` per DEVELOPER_GUIDE
+        # §5.4 (no config module). The accepted truthy
+        # values are "1", "true", "yes" — the spec only
+        # mandates the off-by-default behaviour, so this is
+        # a small operator-convenience allowance.
+        env_flag = os.environ.get("DRAWING_AUTO_BUILD_ENABLED", "0")
+        if env_flag.lower() not in ("1", "true", "yes"):
+            base_response["commit_skipped"] = (
+                f"DRAWING_AUTO_BUILD_ENABLED is '{env_flag}'; "
+                f"global env-var opt-in required for auto-build. "
+                f"Set to '1' to enable."
+            )
+            return base_response
+
+        # ----- Gate 3: confidence floor -----------------------
+        # Per spec §7.3: low-confidence extractions cannot
+        # be auto-committed. The 17.3 review-then-commit
+        # flow is the only path forward in this case.
+        if result.confidence < CONFIDENCE_FLOOR:
+            base_response["commit_skipped"] = (
+                f"confidence_below_floor: result.confidence="
+                f"{result.confidence:.3f} < {CONFIDENCE_FLOOR}; "
+                f"low-confidence extractions cannot be "
+                f"auto-committed (spec §7.3). Use the "
+                f"review-before-commit flow in 17.3."
+            )
+            base_response["status"] = "rejected"
+            return base_response
+
+        # ----- All gates passed: project graph and run -------
+        # The graph hash is a stable identifier for the
+        # IngestionResult. The dict is sorted at every
+        # level so the hash is independent of dict key
+        # order, which Python does not guarantee. The
+        # manifest records this so the lineage is
+        # traceable end-to-end (spec §5.2 auditability).
+        graph_dict = result.graph.to_dict()
+        graph_bytes = json.dumps(
+            graph_dict, sort_keys=True, default=str,
+        ).encode("utf-8")
+        graph_hash = "sha256:" + hashlib.sha256(
+            graph_bytes
+        ).hexdigest()
+
+        ingestion_path = {
+            "source_file": source_file,
+            "ocr_confidence": result.confidence,
+            "graph_hash": graph_hash,
+        }
+
+        # Project the MachineGraph into the orchestrator's
+        # config shape. The adapter is the single point of
+        # truth for that mapping (Commit 3a); the route is
+        # intentionally thin and does not duplicate it.
+        config = graph_to_orchestrator_config(
+            result.graph, result.bom_rows,
+        )
+
+        # The orchestrator runs with auto_promote=False.
+        # That flag is the governance guarantee: drawing-
+        # ingested builds are constitutionally incapable of
+        # promoting a champion (Commit 3a.5).
+        orchestrator = _get_orchestrator()
+        run_result = orchestrator.run_machine_job(
+            machine_name=result.graph.name,
+            config=config,
+            ingestion_path=ingestion_path,
+            auto_promote=False,
+        )
+
+        # Surface the orchestrator's response alongside the
+        # IngestionResult. ``promotion_mode`` is "disabled"
+        # by construction (auto_promote=False). The
+        # response is the union of the 17.1 IngestionResult
+        # shape and the orchestrator's result dict.
+        base_response["committed"] = True
+        base_response["commit_skipped"] = None
+        base_response["orchestrator_result"] = {
+            "revision_id": run_result.get("revision_id"),
+            "directory": run_result.get("directory"),
+            "score": run_result.get("score"),
+            "promoted": run_result.get("promoted"),
+            "promotion_mode": run_result.get("promotion_mode"),
+            "parent_info": run_result.get("parent_info"),
+        }
+        base_response["ingestion_path"] = ingestion_path
+        return base_response
+
+    except Exception as exc:
+        logger.error("Drawing ingest-and-build failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ingest-and-build failed: {exc}",
+        )
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 @router.post("/graph/compile")
 def compile_graph(payload: Dict[str, Any]):
     """
