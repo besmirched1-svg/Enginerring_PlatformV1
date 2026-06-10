@@ -65,11 +65,12 @@ class EngineeringOrchestrator:
         }
 
     def run_machine_job(
-        self, 
-        machine_name: str, 
-        config: Dict[str, Any], 
-        chain_id: Optional[str] = None, 
-        attempt_in_chain: int = 0
+        self,
+        machine_name: str,
+        config: Dict[str, Any],
+        chain_id: Optional[str] = None,
+        attempt_in_chain: int = 0,
+        ingestion_path: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         revision_id = f"rev_{uuid.uuid4().hex[:8]}"
         logger.info("Running build pipeline for %s [%s]", machine_name, revision_id)
@@ -232,7 +233,10 @@ class EngineeringOrchestrator:
             config,
             total_mass,
         )
-        archive_revision(machine_name, revision_id, config, parent_info)
+        archive_revision(
+            machine_name, revision_id, config, parent_info,
+            ingestion_path=ingestion_path,
+        )
 
         # Persist the evaluation as a JSON artifact in the revision
         # directory. Before this, the evaluation only existed in the

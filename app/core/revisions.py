@@ -8,13 +8,25 @@ logger = logging.getLogger("engine.revisions")
 
 REVISIONS_BASE_DIR = "outputs/revisions"
 
-def archive_revision(machine_name: str, revision_id: str, config: Dict[str, Any], parent_info: Optional[Dict[str, Any]] = None) -> str:
+def archive_revision(
+    machine_name: str,
+    revision_id: str,
+    config: Dict[str, Any],
+    parent_info: Optional[Dict[str, Any]] = None,
+    ingestion_path: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     Saves a design iteration along with its source tracking variables and historical metadata.
+
+    The optional ``ingestion_path`` kwarg carries drawing-ingest provenance
+    (Phase 17.2a). When supplied, it is written into the manifest as a
+    top-level ``ingestion_path`` field. When ``None`` (the default), the
+    manifest is byte-identical to its pre-17.2a shape — the additive
+    extension is invisible to any caller that does not opt in.
     """
     rev_dir = os.path.join(REVISIONS_BASE_DIR, machine_name, revision_id)
     os.makedirs(rev_dir, exist_ok=True)
-    
+
     manifest = {
         "machine_name": machine_name,
         "revision_id": revision_id,
@@ -24,11 +36,18 @@ def archive_revision(machine_name: str, revision_id: str, config: Dict[str, Any]
         "attempt_in_chain": parent_info.get("attempt_in_chain", 0) if parent_info else 0,
         "promotion_status": "candidate"
     }
-    
+
+    # Phase 17.2a: drawing-ingest provenance. Additive only — when not
+    # provided, the manifest keys above are the complete payload and the
+    # resulting JSON is byte-equivalent to a pre-17.2a manifest written
+    # with the same inputs.
+    if ingestion_path is not None:
+        manifest["ingestion_path"] = ingestion_path
+
     manifest_path = os.path.join(rev_dir, "manifest.json")
     with open(manifest_path, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2)
-        
+
     logger.info(f"Saved manifest record to: {manifest_path}")
     return rev_dir
 
