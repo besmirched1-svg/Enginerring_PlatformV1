@@ -130,6 +130,37 @@ desired).
 | `app/telemetry/` | Sensor ingest, deviation detection, feedback triggers | `tests/test_hardware_feedback_loop.py` |
 | `app/ai/` | Reserved for AI-specific helpers | (no current consumers) |
 
+## The official factory → director bridge
+
+There is exactly **one place** where the plant pipeline and the
+machine pipeline meet:
+`app/factory_director/planner.py:reliefs_to_dynamic_constraints()`.
+
+```
+   Plant pipeline                       Machine pipeline
+   ──────────────                       ────────────────
+   factory_director.run()  ──Relief──>   reliefs_to_dynamic_constraints()
+                                            │
+                                            ▼
+                                       DynamicConstraint
+                                            │
+                                            ▼
+                                       director.next_round()
+                                            │
+                                            ▼
+                                       orchestrator.run()
+                                            (with bound)
+```
+
+The `Relief` type is the factory director's output. The
+`DynamicConstraint` type is the per-machine director's input.
+The conversion function is the only place that knows the
+shape of both. **If you add a new `Relief` type, you must
+update `reliefs_to_dynamic_constraints()` in the same
+change.** See `app/factory_director/director.py` for the
+policy table that produces reliefs and
+`app/factory_director/planner.py` for the conversion.
+
 ## The `manufacturing` ↔ `production` contract
 
 This is the most-tested boundary in the platform and the one most
