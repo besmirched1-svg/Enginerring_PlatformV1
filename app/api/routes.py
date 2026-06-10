@@ -2295,3 +2295,212 @@ def adapt_goal(payload: AdaptGoalRequest):
         "applied": [dc.to_dict() for dc in applied],
         "new_goal_constraints": new_goal.constraints,
     }
+
+
+# =====================================================================
+# Phase 17.3 — /api/drawing/ingest/{ingestion_id}/approve
+# =====================================================================
+#
+# POST /api/drawing/ingest/{ingestion_id}/approve
+#     Body: { "to_state": "APPROVED" | "REJECTED",
+#             "actor": "<string>",
+#             "reason": "<optional string>" }
+#
+#     This is the explicit review-state transition. The
+#     /drawing/ingest route writes a snapshot; the operator
+#     reviews it (offline, in their own tooling); this route
+#     is what records the operator's verdict.
+#
+#     The legal-transition table is enforced by the
+#     ReviewStore: an attempt to transition to a non-legal
+#     next-state returns 409 Conflict. The 409 response
+#     body lists the legal-next-states for the current
+#     state so the operator can correct their request
+#     without having to consult the spec.
+#
+#     No champion is set here. This route only changes
+#     the review state. The /commit route is the only
+#     route that may call the orchestrator with
+#     commit_requested=True, and the /commit route
+#     requires the state to be APPROVED at the time
+#     of the call. The "approved" state here is a
+#     prerequisite for /commit, not a guarantee.
+#
+#     The route is the only legitimate caller of
+#     ReviewStore.transition() with to_state in
+#     {APPROVED, REJECTED}. The PROMOTED state is
+#     written by /commit, not here. The state machine
+#     plus the store's own concurrency control make
+#     it impossible for two concurrent /approve
+#     requests to both succeed.
+# =====================================================================
+
+
+class ReviewDecisionRequest(BaseModel):
+    """The body of the /approve route.
+
+    ``to_state`` must be one of the four states the
+    operator can transition to from the review
+    decision endpoint:
+
+    - ``"pending_review"``  (DRAFT -> PENDING_REVIEW
+      — the operator has started the review.)
+    - ``"approved"``        (PENDING_REVIEW -> APPROVED
+      — the operator approves the ingestion.)
+    - ``"rejected"``        (PENDING_REVIEW -> REJECTED
+      — the operator rejects the ingestion, OR
+      APPROVED -> REJECTED — the operator retracts
+      a previous approval.)
+
+    ``"promoted"`` is reserved for the /commit route
+    and is rejected by this route at the shape check.
+    ``"draft"`` is the implicit initial state and
+    is never a valid ``to_state`` for the operator
+    to write (the only way to leave DRAFT is to
+    PENDING_REVIEW, which is itself a /approve call).
+    """
+    to_state: str
+    actor: str
+    reason: Optional[str] = None
+
+
+@router.post("/drawing/ingest/{ingestion_id}/approve")
+def approve_ingestion(
+    ingestion_id: str,
+    payload: ReviewDecisionRequest,
+):
+    """Record the operator's review decision on an ingestion.
+
+    The legal-transition table is enforced by the
+    ``ReviewStore`` (which calls
+    ``assert_legal_transition`` inside its per-
+    ingestion lock). An illegal transition is
+    translated to HTTP 409 with the legal-next-
+    states list so the operator can self-correct.
+
+    Returns 200 with the new state on success.
+    Returns 400 if the request shape is wrong.
+    Returns 404 if the ingestion_id is unknown.
+    Returns 409 if the requested transition is
+    illegal from the current state.
+    """
+    from app.vision.ingestion_store import IngestionStore
+    from app.vision.review_state import (
+        ReviewState,
+        IllegalReviewStateTransition,
+        legal_next_states,
+    )
+    from app.vision.review_store import ReviewStore
+
+    # The set of ``to_state`` values the /approve
+    # route is willing to accept. PROMOTED is
+    # excluded at the route level (the state machine
+    # would also reject it from any state except
+    # APPROVED, but the route layer's check is more
+    # informative). DRAFT is excluded because there
+    # is no legal transition into DRAFT. Defined
+    # here, not at module level, to keep the
+    # import surface narrow.
+    allowed_targets = frozenset({
+        ReviewState.PENDING_REVIEW,
+        ReviewState.APPROVED,
+        ReviewState.REJECTED,
+    })
+
+    # Validate the request shape. The string-to-
+    # enum mapping is the only place that knows
+    # the on-the-wire spelling of the ReviewState
+    # values (lowercase, per the enum).
+    try:
+        target_state = ReviewState(payload.to_state)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid to_state: {payload.to_state!r}. "
+                f"Must be one of: pending_review, approved, rejected. "
+                f"'promoted' is reserved for the /commit route."
+            ),
+        )
+
+    # The /approve route is the review transition,
+    # not the commit transition. PROMOTED is
+    # rejected here even though the state machine
+    # would also reject it (from any state except
+    # APPROVED) — the route layer's error is more
+    # informative than the generic state-machine
+    # error.
+    if target_state not in allowed_targets:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"to_state={payload.to_state!r} is not a valid "
+                f"review decision. Must be one of: "
+                f"pending_review, approved, rejected. "
+                f"'promoted' is reserved for the /commit route."
+            ),
+        )
+
+    # 404 if the ingestion has never been written.
+    # The /approve route is meaningless without a
+    # snapshot.
+    ingestion_store = IngestionStore()
+    if ingestion_store.read_current(ingestion_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Ingestion not found: {ingestion_id}",
+        )
+
+    # The state machine is enforced inside the
+    # ReviewStore.transition() call (the read-
+    # validate-write is atomic under the per-
+    # ingestion lock). We translate the
+    # IllegalReviewStateTransition exception to a
+    # 409 with the legal-next-states list.
+    #
+    # We read the current state here (outside the
+    # store's transition call) so the success
+    # response can include the from_state. The
+    # read is best-effort: under heavy contention
+    # the from_state could be slightly stale by
+    # the time we report it, but the state
+    # machine's contract is what we are pinning
+    # via the store, not the read.
+    review_store = ReviewStore()
+    from_state = review_store.read_current_state(ingestion_id)
+    try:
+        new_state = review_store.transition(
+            ingestion_id,
+            to_state=target_state,
+            actor=payload.actor,
+            reason=payload.reason,
+        )
+    except IllegalReviewStateTransition as exc:
+        # The current state is read here WITHOUT
+        # the lock, which is fine for the
+        # error-response path: the response is
+        # informational and the read may be
+        # slightly stale by the time it lands. The
+        # truth of the transition is the store's
+        # verdict above.
+        current_state = review_store.read_current_state(ingestion_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "illegal_review_state_transition",
+                "from_state": current_state.value,
+                "to_state": target_state.value,
+                "legal_next_states": sorted(
+                    s.value for s in legal_next_states(current_state)
+                ),
+                "message": str(exc),
+            },
+        )
+
+    return {
+        "status": "ok",
+        "ingestion_id": ingestion_id,
+        "from_state": from_state.value,
+        "to_state": new_state.value,
+        "actor": payload.actor,
+    }
