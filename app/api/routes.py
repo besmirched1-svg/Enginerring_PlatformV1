@@ -185,7 +185,6 @@ def download_model_stl(machine_name: str, revision_id: str):
 # (graph, vision, hemp, simulation endpoints)
 
 from fastapi import UploadFile, File as FastAPIFile
-import tempfile
 
 @router.post("/drawing/ingest")
 async def ingest_drawing(
@@ -196,71 +195,17 @@ async def ingest_drawing(
     Ingest an engineering drawing (PDF or image) and return a
     reconstructed MachineGraph + YAML config.
     """
-    from app.vision.constants import (
-        CONFIDENCE_FLOOR,
-        MAX_FILE_SIZE_BYTES,
-        SUPPORTED_FILE_TYPES,
-    )
-    suffix = "." + (file.filename or "upload").rsplit(".", 1)[-1].lower()
-    if suffix not in SUPPORTED_FILE_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail=(
-                f"Unsupported file type '{suffix}'. "
-                f"Allowed: {sorted(SUPPORTED_FILE_TYPES)}"
-            ),
-        )
+    from app.vision.constants import CONFIDENCE_FLOOR
+    from app.vision.upload_validation import validate_and_stage_upload
 
-    # Pre-check Content-Length header (cheap, rejects obvious
-    # oversize uploads before any I/O). If the client sent
-    # a Content-Length and it exceeds the cap, reject early.
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared_size = int(content_length)
-        except ValueError:
-            declared_size = None
-        if declared_size is not None and declared_size > MAX_FILE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"File exceeds {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB "
-                    f"limit ({declared_size} bytes declared)."
-                ),
-            )
-
-    # Stream the upload to a tempfile, counting bytes as we
-    # go. If the running total exceeds the cap, abort and
-    # reject with HTTP 413. This is the backstop for clients
-    # that don't send Content-Length (chunked transfer
-    # encoding, or lying clients).
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        bytes_written = 0
-        chunk_size = 64 * 1024
-        try:
-            while True:
-                chunk = await file.read(chunk_size)
-                if not chunk:
-                    break
-                bytes_written += len(chunk)
-                if bytes_written > MAX_FILE_SIZE_BYTES:
-                    tmp.close()
-                    try:
-                        os.remove(tmp.name)
-                    except OSError:
-                        pass
-                    raise HTTPException(
-                        status_code=413,
-                        detail=(
-                            f"File exceeds "
-                            f"{MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB "
-                            f"limit (>{bytes_written} bytes streamed)."
-                        ),
-                    )
-                tmp.write(chunk)
-        finally:
-            await file.close()
-        tmp_path = tmp.name
+    # Phase 17.2a: validation + tempfile staging extracted to
+    # ``app.vision.upload_validation.validate_and_stage_upload``.
+    # Behavior is byte-for-byte equivalent to the pre-17.2a
+    # inline code (extension check, Content-Length pre-check,
+    # 64 KB streaming backstop). The 17.2 ``/drawing/ingest-and-build``
+    # route will call the same helper.
+    staged = await validate_and_stage_upload(request, file)
+    tmp_path = staged.tmp_path
 
     try:
         from app.vision.drawing_ingestor import ingest
