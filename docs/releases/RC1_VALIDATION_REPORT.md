@@ -406,7 +406,10 @@ The two findings (STL format claim, custom plant claim) are
 what the code does, and the code is sound.
 
 If the maintainer accepts this report, the next step is
-`git tag v1.0.0` against the current HEAD (the same commit
-`77c54fd` that this report validated) and the freeze of the
-branch. Phase 17 (Engineering Drawing Ingestion) becomes the
-first post-release initiative.
+`git tag v1.0.0` against the current HEAD of the
+`rc1-validation` branch (commit `4788199`, this report
+commit, sitting one commit past the validated `77c54fd`),
+and the freeze of the branch. The report is part of the
+v1.0 record — it documents the validation that justifies
+the tag. Phase 17 (Engineering Drawing Ingestion) becomes
+the first post-release initiative on a new branch.
