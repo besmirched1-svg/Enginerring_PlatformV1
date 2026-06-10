@@ -194,9 +194,34 @@ async def ingest_drawing(
     """
     Ingest an engineering drawing (PDF or image) and return a
     reconstructed MachineGraph + YAML config.
+
+    Phase 17.3 (task #39) adds the ``ingestion_id`` field
+    to the response. The ingestion_id is a stable
+    identifier that the operator uses to:
+
+    - PATCH the graph via the /api/drawing/ingest/{id}/graph
+      route (task #28).
+    - Approve the ingestion via /api/drawing/ingest/{id}/approve
+      (task #42).
+    - Commit the ingestion via /api/drawing/ingest/{id}/commit
+      (task #38).
+    - Read the ingestion's full state via a future
+      GET /api/drawing/ingest/{id} route (out of scope
+      for 17.3).
+
+    The ingestion_id is generated server-side and is
+    guaranteed unique (uuid4 hex). The route also
+    writes a snapshot record to the IngestionStore,
+    so the ingestion survives across requests and
+    is auditable. The graph_hash is a sha256 of
+    the graph dict (sorted keys for determinism)
+    so the operator can verify the graph content
+    end-to-end.
     """
     from app.vision.constants import CONFIDENCE_FLOOR
     from app.vision.upload_validation import validate_and_stage_upload
+    from app.vision.ingestion_store import IngestionStore
+    import hashlib
 
     # Phase 17.2a: validation + tempfile staging extracted to
     # ``app.vision.upload_validation.validate_and_stage_upload``.
@@ -224,8 +249,44 @@ async def ingest_drawing(
                 f"confidence_below_floor: result.confidence="
                 f"{result.confidence:.3f} < {CONFIDENCE_FLOOR}"
             )
+
+        # Phase 17.3 (task #39): issue an ingestion_id
+        # and persist the snapshot to the IngestionStore.
+        # The ingestion_id is a stable identifier that
+        # downstream routes (PATCH /graph, /approve, /commit)
+        # use to find the ingestion. The graph_hash is
+        # the deterministic fingerprint of the graph
+        # content; downstream routes that receive a
+        # different graph_hash can detect tampering.
+        ingestion_id = f"ing_{uuid.uuid4().hex[:12]}"
+        graph_dict = result.graph.to_dict()
+        graph_bytes = json.dumps(
+            graph_dict, sort_keys=True, default=str,
+        ).encode("utf-8")
+        graph_hash = "sha256:" + hashlib.sha256(
+            graph_bytes
+        ).hexdigest()
+
+        IngestionStore().write_snapshot(
+            ingestion_id,
+            source_file=file.filename or "upload",
+            machine_name=result.graph.name,
+            graph=graph_dict,
+            bom_rows=list(result.bom_rows),
+            dimensions=[d.to_dict() if hasattr(d, "to_dict") else d
+                        for d in result.dimensions],
+            yaml_config=result.yaml_config,
+            title_block=result.title_block,
+            confidence=result.confidence,
+            ocr_confidence=result.confidence,
+            graph_hash=graph_hash,
+            warnings=list(warnings),
+        )
+
         return {
             "status": "ok",
+            "ingestion_id": ingestion_id,
+            "graph_hash": graph_hash,
             "machine_name": result.graph.name,
             "revision": result.graph.revision,
             "confidence": result.confidence,
@@ -235,7 +296,7 @@ async def ingest_drawing(
             "bom_rows": result.bom_rows,
             "dimensions_found": len(result.dimensions),
             "yaml_config": result.yaml_config,
-            "graph": result.graph.to_dict(),
+            "graph": graph_dict,
             "warnings": warnings,
         }
     except Exception as exc:
