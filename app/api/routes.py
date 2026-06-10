@@ -82,6 +82,43 @@ def get_status(machine_name: str):
             "active_chain": {"chain_id": f"chain_{machine_name}_default", "status": status}}
 
 
+# =====================================================================
+# Health endpoint (Phase 16.7)
+# =====================================================================
+#
+# GET /api/health
+#     No body. Returns the platform's startup-check report.
+#     200 if healthy, 503 if unhealthy. The body is the same shape
+#     in both cases so monitoring tools can parse the failure
+#     detail without having to special-case 200 vs 503.
+# =====================================================================
+
+
+@router.get("/health", tags=["platform"])
+def get_health():
+    """Platform health check.
+
+    Runs the full :mod:`app.core.startup_checks` report. Returns
+    ``200`` if the platform is healthy, ``503`` if any critical
+    startup check has failed (the body still carries the full
+    report so the operator can see which check failed).
+    """
+    from app.__version__ import __version__
+    from app.core.startup_checks import run_all_checks
+
+    report = run_all_checks()
+    body = {
+        "status": report["status"],
+        "version": __version__,
+        "checks": report["checks"],
+        "critical_failures": report["critical_failures"],
+        "warnings": report["warnings"],
+    }
+    if report["status"] == "unhealthy":
+        raise HTTPException(status_code=503, detail=body)
+    return body
+
+
 @router.post("/improve/register")
 def register_new_candidate(payload: ManualJobSubmission):
     orchestrator = _get_orchestrator()
