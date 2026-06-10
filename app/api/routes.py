@@ -194,12 +194,15 @@ async def ingest_drawing(file: UploadFile = FastAPIFile(...)):
     Ingest an engineering drawing (PDF or image) and return a
     reconstructed MachineGraph + YAML config.
     """
+    from app.vision.constants import SUPPORTED_FILE_TYPES
     suffix = "." + (file.filename or "upload").rsplit(".", 1)[-1].lower()
-    allowed = {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif"}
-    if suffix not in allowed:
+    if suffix not in SUPPORTED_FILE_TYPES:
         raise HTTPException(
             status_code=415,
-            detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(allowed)}",
+            detail=(
+                f"Unsupported file type '{suffix}'. "
+                f"Allowed: {sorted(SUPPORTED_FILE_TYPES)}"
+            ),
         )
 
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:

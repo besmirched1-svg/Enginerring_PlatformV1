@@ -15,6 +15,8 @@ import re
 from pathlib import Path
 from typing import Tuple
 
+from app.vision.constants import SUPPORTED_FILE_TYPES
+
 logger = logging.getLogger("engine.vision.ocr_engine")
 
 
@@ -92,6 +94,10 @@ def extract_text(file_path: Path) -> Tuple[str, float]:
     file_path = Path(file_path)
     suffix = file_path.suffix.lower()
 
+    if suffix not in SUPPORTED_FILE_TYPES:
+        logger.warning("Unsupported file type: %s", suffix)
+        return "", 0.0
+
     if suffix == ".pdf":
         text, conf = _extract_pdf_text(file_path)
         if text.strip():
@@ -99,8 +105,6 @@ def extract_text(file_path: Path) -> Tuple[str, float]:
         # Fall through to OCR for scanned PDFs
         return _extract_ocr_text(file_path)
 
-    if suffix in {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp"}:
-        return _extract_ocr_text(file_path)
-
-    logger.warning("Unsupported file type: %s", suffix)
-    return "", 0.0
+    # All other supported file types (image formats) go
+    # through pytesseract OCR.
+    return _extract_ocr_text(file_path)
