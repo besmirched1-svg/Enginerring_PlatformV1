@@ -12,6 +12,7 @@ from .energy_balance import solve_energy_balance
 from .layout import auto_layout
 from .mass_balance import solve_mass_balance
 from .models import FactoryProcessGraph, ProcessStream, ProcessUnit, ProcessUnitType, StreamType
+from .validation import clamp_factory_input, validate_factory_graph
 
 logger = logging.getLogger("engine.factory.optimization")
 
@@ -112,7 +113,18 @@ def evaluate_factory(
     individual.fitness["oee_score"] = bn.overall_equipment_effectiveness * 100.0
     individual.fitness["layout_efficiency"] = lo.placement_efficiency * 100.0
     individual.fitness["capital_cost"] = -cap_cost
-    individual.fitness["bottleneck_slack"] = bn.steps[bn.bottleneck_unit_id].slack_kg_hr if bn.bottleneck_unit_id and bn.bottleneck_unit_id in bn.steps else 0.0
+    # Phase 16.1: if the bottleneck is reported but not in the per-step
+    # breakdown (e.g. a graph with only buffer/splitter units), the slack
+    # is 0 and we record the anomaly on the individual rather than just
+    # dropping it. Constraint checking later flags it.
+    if bn.bottleneck_unit_id and bn.bottleneck_unit_id in bn.steps:
+        individual.fitness["bottleneck_slack"] = bn.steps[bn.bottleneck_unit_id].slack_kg_hr
+    else:
+        individual.fitness["bottleneck_slack"] = 0.0
+        if bn.bottleneck_unit_id:
+            individual.constraint_violations = list(individual.constraint_violations) + [
+                f"Bottleneck {bn.bottleneck_unit_id} not present in per-step breakdown"
+            ]
 
     violations = []
     for ub in mb.units.values():
@@ -202,7 +214,17 @@ def crowding_distance(front: List[FactoryIndividual]) -> None:
 
 
 def tournament_selection(population: List[FactoryIndividual], tournament_size: int = 2) -> FactoryIndividual:
-    candidates = random.sample(population, min(tournament_size, len(population)))
+    # Phase 16.1: defensive clamp on tournament_size. A 0 or 1 tournament
+    # silently degenerates the selection operator; a > population_size
+    # tournament is just wasteful.
+    ts = int(
+        clamp_factory_input(
+            "tournament_size",
+            tournament_size,
+            default=2,
+        )
+    )
+    candidates = random.sample(population, min(ts, len(population)))
     best = candidates[0]
     for c in candidates[1:]:
         if c.rank < best.rank or (c.rank == best.rank and c.crowding_distance > best.crowding_distance):
@@ -248,6 +270,11 @@ def mutate(
     if mutators is None:
         mutators = default_mutators()
 
+    # Phase 16.1: clamp mutation_rate to [0, 1] for the same reasons as
+    # the optimizer below: a negative rate would skip every mutation, a
+    # rate > 1 is meaningless (no second draw per gene).
+    mutation_rate = clamp_factory_input("mutation_rate", mutation_rate, default=0.2)
+
     mutated = copy.deepcopy(graph)
     for unit in mutated.units.values():
         if random.random() < mutation_rate:
@@ -269,7 +296,35 @@ def optimize_factory(
     if seed is not None:
         random.seed(seed)
 
+    # Phase 16.1: defensive clamps on the optimizer inputs. A negative
+    # population size would infinite-loop the offspring builder; a
+    # mutation rate > 1 or < 0 corrupts the search; a 0-generation run is
+    # valid (just a random population) but is logged so the user notices.
+    warnings: List[str] = []
+    validate_factory_graph(base_graph, warnings)
+    feed_rate_kg_hr = clamp_factory_input(
+        "feed_rate_kg_hr", feed_rate_kg_hr, default=1000.0, warnings=warnings
+    )
+    population_size = int(
+        clamp_factory_input(
+            "population_size", population_size, default=50, warnings=warnings
+        )
+    )
+    generations = int(
+        clamp_factory_input(
+            "generations", generations, default=20, warnings=warnings
+        )
+    )
+    mutation_rate = clamp_factory_input(
+        "mutation_rate", mutation_rate, default=0.2, warnings=warnings
+    )
+    crossover_rate = clamp_factory_input(
+        "crossover_rate", crossover_rate, default=0.8, warnings=warnings
+    )
+
     history: List[Dict[str, Any]] = []
+    for w in warnings:
+        history.append({"generation": -1, "warning": w})
 
     population: List[FactoryIndividual] = []
     for _ in range(population_size):

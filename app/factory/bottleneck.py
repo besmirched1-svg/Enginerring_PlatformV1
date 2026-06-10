@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .models import FactoryProcessGraph, ProcessUnitType
+from .validation import clamp_factory_input, validate_factory_graph
 
 logger = logging.getLogger("engine.factory.bottleneck")
 
@@ -78,6 +79,18 @@ def analyze_bottleneck(
     steps: Dict[str, ProcessStepCapacity] = {}
     min_max_capacity = float("inf")
     bottleneck_id: Optional[str] = None
+
+    # Phase 16.1: defensive validation. target_rate_kg_hr=0 makes every
+    # utilization 0% and every takt_time infinite; < 0 flips the sign.
+    # Clamp to the engineering envelope and surface a warning.
+    validate_factory_graph(graph, warnings)
+    target_rate_kg_hr = clamp_factory_input(
+        "target_rate_kg_hr",
+        target_rate_kg_hr,
+        default=1000.0,
+        warnings=warnings,
+    )
+
     flow_order = graph.material_flow_order()
 
     for unit in flow_order:
@@ -118,6 +131,8 @@ def analyze_bottleneck(
         steps[bottleneck_id].is_bottleneck = True
 
     theoretical_max = min_max_capacity if min_max_capacity != float("inf") else 0.0
+    if theoretical_max == 0.0 and not flow_order:
+        warnings.append("No process units to analyze for bottleneck")
 
     oee = 0.0
     if steps:

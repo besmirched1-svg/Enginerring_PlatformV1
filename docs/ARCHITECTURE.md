@@ -112,7 +112,8 @@ desired).
 | `app/economics/` | Capital, operating, lifecycle, ROI, NPV, IRR | `tests/test_economics.py` |
 | `app/evolution/` | NSGA-II multi-objective search | (covered by `test_evolution.py`) |
 | `app/experiment/` | DOE / experiment lab | `tests/test_experiment_lab.py` |
-| `app/factory/` | Process graph, mass/energy balance, layout, optimization | `tests/test_factory.py` |
+| `app/factory/` | **Plant-scale layer**: FactoryGraph, mass/energy balance, bottleneck, layout, NSGA-II line optimization, input validation | `tests/test_factory.py` |
+| `app/factory_director/` | (Phase 16.2) Combines per-machine manufacturing + production artifacts into plant-level orchestration | (added Phase 16.2) |
 | `app/graph/` | MachineGraph + YAML compiler | `tests/test_graph.py` |
 | `app/importers/` | External data import adapters | (covered by `test_graph.py`) |
 | `app/knowledge/` | Append-only design memory, lesson query, pattern grouping | `tests/test_knowledge.py` |
@@ -189,3 +190,40 @@ These are real but *not* part of architectural cleanup:
   `tests/test_manufacturing.py` exercises analyzers;
   `tests/test_production.py` exercises packaging. No restructuring
   required.
+
+## Factory layer rule (added Phase 16.1)
+
+`app/factory/` is a **plant-scale** layer that sits above
+`app/manufacturing/` (which is per-machine). The dependency rules are
+the same shape as the manufacturing ↔ production contract:
+
+1. **Direction is one-way downward.** `app/factory/` analyzers may
+   import from `app/manufacturing/` and `app/physics/`. `app/manufacturing/`
+   and `app/physics/` never import from `app/factory/`. The factory
+   layer depends on per-machine primitives; the per-machine layers
+   have no knowledge of the line they happen to be in.
+2. **Math lives in `manufacturing` and `physics`.** A factory formula
+   that recomputes a per-machine result (mass balance of a single
+   unit, cycle time, weld mass) belongs in the manufacturing analyzer
+   it duplicates. The factory layer may *sum*, *compose*, or
+   *iterate*, but it does not *re-derive*.
+3. **The factory director is the only place allowed to combine
+   manufacturing + production artifacts.** That is the whole point of
+   a factory director: it takes per-machine manufacturing analyses
+   and per-machine production packages and decides what to do with
+   the line as a whole. Subordinate factory analyzers (mass balance,
+   energy balance, bottleneck, layout, optimization) may not import
+   from `app/production/`; only the director may.
+4. **`app/production/` is the packaging layer for factory outputs the
+   same way it is for machine outputs.** A factory KPI dashboard, a
+   plant-wide commissioning plan, and a multi-machine production
+   package are all packaging concerns and live in
+   `app/production/`. The factory director calls into production the
+   same way `app/director/` does.
+
+This rule is enforced by the Phase 16.1 audit: `app/factory/*.py` was
+checked for any `from app.production` import (zero hits) and any
+math duplication with `app/manufacturing/` (zero hits). New factory
+code that needs to cross the boundary must do so through
+`app/factory_director/` (added in Phase 16.2), never by reaching
+across from a leaf analyzer.

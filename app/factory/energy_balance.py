@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 from .models import FactoryProcessGraph, ProcessUnitType, StreamType
+from .validation import clamp_factory_input, validate_factory_graph
 
 logger = logging.getLogger("engine.factory.energy_balance")
 
@@ -85,6 +86,17 @@ def solve_energy_balance(graph: FactoryProcessGraph, throughput_kg_hr: float = 0
     total_heat_in = 0.0
     total_heat_out = 0.0
     total_enthalpy = 0.0
+
+    # Phase 16.1: defensive validation. Clamp throughput to >= 0; the
+    # specific-energy calculation divides by it, so a negative value
+    # would flip the sign of every kWh/kg number.
+    validate_factory_graph(graph, warnings)
+    throughput_kg_hr = clamp_factory_input(
+        "throughput_kg_hr",
+        throughput_kg_hr,
+        default=0.0,
+        warnings=warnings,
+    )
 
     for unit in graph.units.values():
         base_power = unit.power_kw or _DEFAULT_POWER.get(unit.unit_type, 10.0)

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .models import FactoryProcessGraph, ProcessStream, ProcessUnit, ProcessUnitType, StreamType
+from .validation import clamp_factory_input, validate_factory_graph
 
 logger = logging.getLogger("engine.factory.mass_balance")
 
@@ -77,6 +78,22 @@ def solve_mass_balance(
     warnings: List[str] = []
     unit_balances: Dict[str, UnitMassBalance] = {}
     stream_flows: Dict[str, float] = {}
+
+    # Phase 16.1: defensive validation. Clamp inputs, normalise graph
+    # fields, surface any out-of-envelope values as warnings rather than
+    # letting them silently corrupt the iteration.
+    validate_factory_graph(graph, warnings)
+    feed_rate_kg_hr = clamp_factory_input(
+        "feed_rate_kg_hr", feed_rate_kg_hr, default=1000.0, warnings=warnings
+    )
+    max_iterations = int(
+        clamp_factory_input(
+            "max_iterations", max_iterations, default=50, warnings=warnings
+        )
+    )
+    tolerance = clamp_factory_input(
+        "tolerance", tolerance, default=0.001, warnings=warnings
+    )
 
     if not graph.feed_streams:
         warnings.append("No feed streams defined")

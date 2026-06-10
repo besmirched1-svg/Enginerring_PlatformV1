@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from .models import FactoryProcessGraph, ProcessUnitType
+from .validation import clamp_factory_input, validate_factory_graph
 
 logger = logging.getLogger("engine.factory.layout")
 
@@ -37,6 +38,7 @@ class LayoutSolution:
     overlap_count: int = 0
     placement_efficiency: float = 0.0
     bounding_box: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -54,6 +56,7 @@ class LayoutSolution:
                 k: {"x": round(v.x, 1), "y": round(v.y, 1), "width_m": v.width_m, "depth_m": v.depth_m}
                 for k, v in self.positions.items()
             },
+            "warnings": self.warnings,
         }
 
 
@@ -91,9 +94,19 @@ def auto_layout(
     total_area = 0.0
     total_distance = 0.0
     overlap_count = 0
+    warnings: List[str] = []
+
+    # Phase 16.1: defensive validation. Clamp spacing to >= 0; negative
+    # spacing would overlap units by construction. Normalize graph
+    # footprints in case the user passed weird values.
+    validate_factory_graph(graph, warnings)
+    spacing_m = clamp_factory_input(
+        "spacing_m", spacing_m, default=2.0, warnings=warnings
+    )
 
     if not flow_order:
-        return LayoutSolution()
+        warnings.append("No process units to lay out")
+        return LayoutSolution(warnings=warnings)
 
     n = len(flow_order)
     if rows is None:
@@ -152,8 +165,15 @@ def auto_layout(
     else:
         x_min = y_min = x_max = y_max = 0.0
 
-    bounding_area = (x_max - x_min) * (y_max - y_min) if (x_max - x_min) * (y_max - y_min) > 0 else 1.0
-    placement_efficiency = total_area / bounding_area
+    bounding_area = (x_max - x_min) * (y_max - y_min)
+    if bounding_area <= 0.0:
+        # Phase 16.1: zero-area factory (single unit at origin) used to
+        # silently fake 100% efficiency by dividing by 1.0. Surface the
+        # case explicitly and report efficiency as 0.
+        warnings.append("Factory bounding box has zero area; placement_efficiency set to 0")
+        placement_efficiency = 0.0
+    else:
+        placement_efficiency = total_area / bounding_area
 
     return LayoutSolution(
         positions=positions,
@@ -162,4 +182,5 @@ def auto_layout(
         overlap_count=overlap_count,
         placement_efficiency=placement_efficiency,
         bounding_box=(x_min, y_min, x_max, y_max),
+        warnings=warnings,
     )

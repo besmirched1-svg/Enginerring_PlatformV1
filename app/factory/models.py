@@ -7,6 +7,14 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
+def _is_finite_number(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(float(value))
+
+
 class ProcessUnitType(str, Enum):
     RECEIVING = "receiving"
     STORAGE = "storage"
@@ -59,6 +67,16 @@ class ProcessStream:
     def __post_init__(self):
         if not self.stream_id:
             self.stream_id = uuid.uuid4().hex[:8]
+        # Phase 16.1: defensive clamp on stream numerics. Same pattern
+        # as ProcessUnit: non-finite or negative values get safe defaults.
+        if not _is_finite_number(self.mass_flow_kg_hr):
+            self.mass_flow_kg_hr = 0.0
+        else:
+            self.mass_flow_kg_hr = max(0.0, float(self.mass_flow_kg_hr))
+        if not _is_finite_number(self.enthalpy_kw):
+            self.enthalpy_kw = 0.0
+        # temperature_c and pressure_bar can legitimately be negative
+        # (cryogenics, vacuum) so we only sanitise, not clamp.
 
     def copy(self) -> ProcessStream:
         return ProcessStream(
@@ -96,6 +114,31 @@ class ProcessUnit:
     def __post_init__(self):
         if not self.unit_id:
             self.unit_id = uuid.uuid4().hex[:8]
+        # Phase 16.1: defensive clamps on the numeric fields. The
+        # analyzers also validate, but clamping here at construction
+        # means downstream code never has to handle an obviously-broken
+        # value. Non-finite values fall back to safe defaults; out-of-
+        # range values get clamped to the engineering envelope.
+        if not _is_finite_number(self.efficiency):
+            self.efficiency = 0.95
+        else:
+            self.efficiency = max(0.0, min(1.0, float(self.efficiency)))
+        if not _is_finite_number(self.max_capacity_kg_hr):
+            self.max_capacity_kg_hr = 1000.0
+        else:
+            self.max_capacity_kg_hr = max(0.0, float(self.max_capacity_kg_hr))
+        if not _is_finite_number(self.footprint_m2):
+            self.footprint_m2 = 10.0
+        else:
+            self.footprint_m2 = max(0.0, float(self.footprint_m2))
+        if not _is_finite_number(self.power_kw):
+            self.power_kw = 0.0
+        if not _is_finite_number(self.heat_duty_kw):
+            self.heat_duty_kw = 0.0
+        if not _is_finite_number(self.capital_cost):
+            self.capital_cost = 0.0
+        if not _is_finite_number(self.operating_cost_per_hr):
+            self.operating_cost_per_hr = 0.0
 
 
 @dataclass

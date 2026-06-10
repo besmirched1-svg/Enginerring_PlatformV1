@@ -589,3 +589,151 @@ class TestFactoryIntegration:
         restored = json.loads(json_str)
         assert restored["name"] == "test_factory"
         assert len(restored["units"]) == 4
+
+
+# ===================================================================
+# Phase 16.1: defensive validation in the factory layer
+# ===================================================================
+#
+# These tests lock in the input-validation contract added to the factory
+# analyzers: out-of-range inputs are clamped, non-finite inputs fall back
+# to safe defaults, and a warning is recorded on the result so callers
+# can surface the issue. The behavior is intentionally non-raising:
+# analyzers are called from inside an optimization loop where a single
+# bad value would otherwise produce NaN that poisons the population.
+
+
+class TestFactoryValidation:
+    def test_process_unit_clamps_efficiency_above_one(self):
+        u = ProcessUnit(unit_type=ProcessUnitType.MILLING, efficiency=1.5)
+        assert u.efficiency == 1.0
+
+    def test_process_unit_clamps_capacity_negative(self):
+        u = ProcessUnit(unit_type=ProcessUnitType.MILLING, max_capacity_kg_hr=-50)
+        assert u.max_capacity_kg_hr == 0.0
+
+    def test_process_unit_falls_back_on_nan(self):
+        u = ProcessUnit(
+            unit_type=ProcessUnitType.MILLING,
+            efficiency=float("nan"),
+            max_capacity_kg_hr=float("inf"),
+            footprint_m2=float("nan"),
+        )
+        # efficiency: 0.95 fallback, max_capacity: 1000.0 fallback,
+        # footprint: 10.0 fallback
+        assert u.efficiency == 0.95
+        assert u.max_capacity_kg_hr == 1000.0
+        assert u.footprint_m2 == 10.0
+
+    def test_process_stream_clamps_negative_mass_flow(self):
+        s = ProcessStream(source="a", target="b", mass_flow_kg_hr=-10)
+        assert s.mass_flow_kg_hr == 0.0
+
+    def test_mass_balance_clamps_negative_feed_rate(self, simple_graph):
+        mb = solve_mass_balance(simple_graph, feed_rate_kg_hr=-100)
+        # Negative feed rate is meaningless; should be clamped to 0
+        # and surfaced as a warning. The analyzer should still return
+        # a valid result shape.
+        assert any("feed_rate" in w for w in mb.warnings)
+        assert mb.feed_rate_kg_hr >= 0.0
+
+    def test_mass_balance_warns_on_bad_tolerance(self, simple_graph):
+        mb = solve_mass_balance(simple_graph, tolerance=-1)
+        assert any("tolerance" in w for w in mb.warnings)
+
+    def test_energy_balance_clamps_negative_throughput(self, simple_graph):
+        eb = solve_energy_balance(simple_graph, throughput_kg_hr=-500)
+        # Negative throughput would flip the sign of specific_energy;
+        # should be clamped to 0 with a warning.
+        assert any("throughput" in w for w in eb.warnings)
+        assert eb.specific_energy_kwh_kg == 0.0
+
+    def test_bottleneck_clamps_target_rate(self, simple_graph):
+        bn = analyze_bottleneck(simple_graph, target_rate_kg_hr=0)
+        # 0 target rate would zero out takt_time and utilization; the
+        # analyzer should clamp to the lower bound (1.0 kg/hr) and warn.
+        assert any("target_rate" in w for w in bn.warnings)
+
+    def test_bottleneck_warns_on_empty_graph(self):
+        g = FactoryProcessGraph(name="empty")
+        bn = analyze_bottleneck(g, target_rate_kg_hr=1000)
+        assert bn.bottleneck_unit_id is None
+        assert bn.theoretical_max_kg_hr == 0.0
+        assert any("units" in w.lower() for w in bn.warnings)
+
+    def test_layout_clamps_negative_spacing(self, simple_graph):
+        lo = auto_layout(simple_graph, spacing_m=-5)
+        assert any("spacing" in w for w in lo.warnings)
+        # Spacing should be clamped to 0; the layout should still
+        # produce positions, just packed tight.
+        assert len(lo.positions) == len(simple_graph.units)
+
+    def test_layout_warns_on_empty_graph(self):
+        # No units -> no positions, no overlap, but a warning surfaces
+        # the degenerate case.
+        g = FactoryProcessGraph(name="empty")
+        lo = auto_layout(g)
+        assert lo.positions == {}
+        assert any("no process units" in w.lower() for w in lo.warnings)
+
+    def test_layout_solution_carries_warnings(self, simple_graph):
+        # The LayoutSolution dataclass should expose its warnings in
+        # both the public attribute and the to_dict() output.
+        lo = auto_layout(simple_graph, spacing_m=-1)
+        assert hasattr(lo, "warnings")
+        assert isinstance(lo.warnings, list)
+        d = lo.to_dict()
+        assert "warnings" in d
+        assert any("spacing" in w for w in d["warnings"])
+
+    def test_optimize_clamps_population_size(self, simple_graph):
+        pop, hist = optimize_factory(
+            simple_graph,
+            population_size=-5,
+            generations=2,
+            seed=42,
+        )
+        # Negative population is meaningless; clamped to 1.
+        assert any("population_size" in w for w in (h.get("warning", "") for h in hist))
+
+    def test_optimize_clamps_mutation_rate_above_one(self, simple_graph):
+        pop, hist = optimize_factory(
+            simple_graph,
+            mutation_rate=2.5,
+            crossover_rate=0.5,
+            population_size=4,
+            generations=1,
+            seed=42,
+        )
+        assert any("mutation_rate" in w for w in (h.get("warning", "") for h in hist))
+
+    def test_tournament_selection_clamps_size(self, simple_graph):
+        from app.factory.optimization import tournament_selection, FactoryIndividual
+        from copy import deepcopy
+        ind_a = FactoryIndividual(graph=deepcopy(simple_graph), rank=0)
+        ind_b = FactoryIndividual(graph=deepcopy(simple_graph), rank=1)
+        # 0-size tournament should not crash and should return a valid member
+        winner = tournament_selection([ind_a, ind_b], tournament_size=0)
+        assert winner in (ind_a, ind_b)
+
+    def test_validation_helpers_exported(self):
+        from app.factory.validation import (
+            FACTORY_INPUT_BOUNDS,
+            clamp_factory_input,
+            validate_factory_graph,
+        )
+        assert "feed_rate_kg_hr" in FACTORY_INPUT_BOUNDS
+        w: list = []
+        v = clamp_factory_input("feed_rate_kg_hr", -100, warnings=w)
+        assert v == 0.0
+        assert w
+
+    def test_import_validation_from_package(self):
+        from app.factory import (
+            FACTORY_INPUT_BOUNDS,
+            clamp_factory_input,
+            validate_factory_graph,
+        )
+        assert FACTORY_INPUT_BOUNDS
+        assert callable(clamp_factory_input)
+        assert callable(validate_factory_graph)
