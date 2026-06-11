@@ -494,6 +494,73 @@ operator should escalate to the maintainer:
 For platform errors and unexpected behavior,
 see `docs/TROUBLESHOOTING.md`.
 
+## What if I get a 4xx for an unsafe payload?
+
+The platform enforces a **filesystem trust boundary** on
+every value that flows from a multipart upload, a URL
+path, or a JSON body into a path component, an
+IngestionStore record, an audit-log entry, or a
+manifest. The boundary is enforced at the route entry —
+a 4xx is returned *before* any pipeline work runs, so
+the response is informative and the platform is not
+left in a partial state.
+
+| Status | Error class            | Routes that emit it                                          | What it means |
+|--------|------------------------|--------------------------------------------------------------|---------------|
+| 400    | `unsafe_filename`      | `POST /api/drawing/ingest`, `POST /api/drawing/ingest-and-build` | The multipart `file.filename` failed the safe-text check. Either the filename exceeds 128 characters, contains a NUL byte, or contains a control character. The platform persists the original filename as `original_filename` metadata and uses a server-generated storage filename. |
+| 400    | `unsafe_path`          | `GET /improve/download/{m}/{r}`                              | A URL-path segment (typically `machine_name` or `revision_id`) failed the safe-path check. The segment contained a path separator, a `..` segment, an absolute path, a NUL byte, or a control character. |
+| 422    | Pydantic `value_error` | `POST /approve`, `POST /commit`, `PATCH /graph`              | A free-text field (`actor`, `reason`, `edited_by`, `note`) failed the safe-text check. The field exceeded 256 characters, contained a NUL byte, or contained a control character (other than `\t`, `\n`, `\r`). |
+
+**The full multipart upload** (`POST /upload`) does not
+return 400 for an unsafe filename. The platform always
+accepts the upload and persists the original filename as
+`original_filename` metadata, while the storage filename
+is server-generated (`uuid.uuid4().hex + suffix`). This
+is the user-specified pattern: **persist the original
+filename as metadata, generate a server-side storage
+filename**. The storage filename is path-safe by
+construction, so the platform cannot be tricked into
+writing to a traversal vector.
+
+**Engineering symbols are preserved.** The safe-text
+check rejects only control characters and NUL bytes.
+The full Unicode range, including `Ø R THK ± °` and
+free-form BOM notes, round-trips intact. If your
+filename or actor name uses engineering symbols, the
+platform will accept it.
+
+**What to do:**
+
+1. **For `unsafe_filename`:** rename the file to a
+   shorter, ASCII-only name (under 128 characters) and
+   retry. The original filename is preserved as
+   `original_filename` metadata if you need it for
+   audit purposes.
+2. **For `unsafe_path`:** the URL-path segment is
+   probably a `machine_name` or `revision_id` that
+   contains a path separator. The platform rejects
+   any segment with a `/`, `\`, or `..` in it. Use
+   a single-segment identifier (e.g. `hopper-a3`
+   instead of `hopper/a3`).
+3. **For Pydantic `value_error`:** the field either
+   exceeds 256 characters or contains a control
+   character. The error response from Pydantic names
+   the field and the violation class; use that to
+   fix the payload.
+
+**For the `/improve/download` legacy v0 shell-out:**
+the platform's pre-17.6 code had a special case for
+`revision_id == "v0"` that called `subprocess.run` to
+regenerate the STL. The 17.6 sprint gates this
+codepath on the `LEGACY_DOWNLOAD_AUTOGEN=1`
+environment variable (default off). The post-17.2a
+production path is the new
+`/api/improve/download/{machine}/{revision_id}` route,
+which does not have this special case.
+
+The full audit deliverable is at
+`docs/security/PHASE17_INPUT_INJECTION_AUDIT.md`.
+
 ## What if I get a 429?
 
 The three drawing-ingest routes are rate-limited

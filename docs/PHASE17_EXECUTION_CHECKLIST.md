@@ -992,8 +992,55 @@ this commit.
       lineage log, the revision manifest, and
       the global audit log at
       `outputs/audit/audit_YYYYMMDD.jsonl`.
-- [ ] Audit the vision pipeline for input-injection
-      attacks. Document the audit.
+- [x] **Input-injection audit on the vision
+      pipeline** (commit landed). The audit
+      deliverable is at
+      `docs/security/PHASE17_INPUT_INJECTION_AUDIT.md`
+      and records: scope and framing (semantic
+      contamination of the pipeline, not generic
+      security scanning); entry points (#1–#16);
+      threat model (per-entry attacker goal,
+      attack vector, blast radius, pre-#34
+      mitigation, #34 mitigation); findings
+      (F1–F10 severity-ordered, all closed or
+      mitigated); out-of-scope items (per-field
+      taint tracking, LLM-route prompt injection,
+      hash-based source-file integrity, OCRSpace
+      / external OCR providers, distributed
+      ingestion workers, legacy
+      `/improve/register`); CVE status of vision
+      dependencies (pdfplumber, pytesseract,
+      pdf2image, Pillow — all 0 open CVEs in the
+      GitHub Advisory Database at audit time);
+      code-level enforcement (the `safe_join`
+      and `text_normalize` primitives); the
+      broader taint model (documented for future
+      governance work); test coverage (49 new
+      tests, 1290 → 1339 platform test count,
+      0 regressions); manual smoke tests
+      (path-traversal upload, path-traversal
+      download, control-character actor,
+      overlong filename); and audit closure.
+      The code-level enforcement covers:
+      `/upload` (server-side storage filename,
+      F1 closed); `/improve/download`
+      (`safe_join`, F2 closed; legacy
+      `revision_id == "v0"` shell-out gated on
+      `LEGACY_DOWNLOAD_AUTOGEN=1`, F3
+      mitigated); orchestrator + revisions.py
+      (`safe_join`, F4 + F5 closed with
+      `rejected_by_governance` translation);
+      `/approve` + `/commit` + PATCH `/graph`
+      (Pydantic `field_validator` on free-text
+      fields, F6 closed); `/drawing/ingest` +
+      `/drawing/ingest-and-build` (filename
+      sanitization at the route boundary, F7
+      closed); vision parsers (`normalize_ocr_text`
+      at the entry of `extract_text`, F8 closed);
+      IngestionStore (`_assert_safe_ingestion_id`
+      defensive guard, F9 guarded); audit log
+      (`sanitize_audit_detail` in `_flush`,
+      sentinel on violation).
 - [x] **Rate limiting on the ingest routes** (commit
       landed). In-memory token bucket, no Redis.
       30/min per IP on `/drawing/ingest`,

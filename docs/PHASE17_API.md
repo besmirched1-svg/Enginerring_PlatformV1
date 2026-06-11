@@ -807,3 +807,135 @@ fixture to enable the limiter for its own
 cases. Production deployments should leave
 the env var unset (default is on).
 
+## Filesystem trust boundaries (Phase 17.6)
+
+The drawing-ingest pipeline and the adjacent
+filesystem operations have multiple sites where
+untrusted bytes (a multipart `file.filename`, a
+URL-path segment, an OCR-extracted title-block
+`name`) become path components. Phase 17.6
+task #34 introduces a single canonical
+filesystem trust-boundary primitive and a
+text-normalization primitive, and wires them in
+at every boundary.
+
+### The `safe_join` primitive
+
+`app/core/safe_path.py` exports
+`safe_join(base_dir, *components)`. The base is
+the trust boundary, the components are
+untrusted. The return is a `Path` that is
+guaranteed to be a child of `base_dir` after
+`Path.resolve()`. On violation: `UnsafePathError`
+(a `ValueError` subclass).
+
+The implementation runs these checks in order
+on each component:
+
+1. `os.path.basename` strip (defense in depth).
+2. Cross-platform absolute-path detection
+   (POSIX `/...` and Windows `C:\\...`).
+3. NUL byte rejection.
+4. C0 / DEL / C1 control character rejection.
+5. `..` and `.` segment rejection.
+6. Empty component rejection.
+7. Per-segment length cap (256,
+   `MAX_SEGMENT_LENGTH`).
+8. `Path.resolve()` and containment check
+   (`base in candidate.parents`).
+9. Total-path length cap (4096,
+   `MAX_PATH_LENGTH`).
+
+The engineering symbol set (`Ø R THK ± °`) is
+preserved. The hard cap of 256 chars is well
+above any realistic engineering filename
+(`hopper-a3-rev-2.pdf` is 21 chars).
+
+### The `text_normalize` primitive
+
+`app/vision/text_normalize.py` exports three
+public functions. All three NFC-normalize,
+strip a leading BOM (U+FEFF), and reject NUL
+bytes and C0 / C1 / DEL control characters
+except `\t \n \r` (the table-formatting
+whitespace whitelist). The full Unicode range
+is allowed; only control characters are
+rejected.
+
+| Function | Use | Length cap |
+|----------|-----|------------|
+| `normalize_ocr_text(text)` | OCR text entering a parser | None |
+| `sanitize_free_text(text, *, max_length=256)` | Operator-supplied `actor`, `reason`, `edited_by`, `note` | 256 |
+| `sanitize_audit_detail(detail)` | Audit log `detail` field | 1024 |
+
+### Per-route changes
+
+| Route | Boundary check | Error response |
+|-------|----------------|----------------|
+| `POST /upload` | Server-side storage filename (`uuid.uuid4().hex + suffix`); original preserved as `original_filename` metadata | n/a (always 200 on success) |
+| `POST /api/drawing/ingest` | `sanitize_free_text(file.filename, max_length=MAX_FILENAME_LENGTH)` at the route boundary | 400 with `unsafe_filename` body |
+| `POST /api/drawing/ingest-and-build` | Same as above | 400 with `unsafe_filename` body |
+| `GET /improve/download/{m}/{r}` | `safe_join(ARCHIVE_ROOT, machine_name, revision_id)` | 400 with `unsafe_path` body |
+| `POST /api/drawing/ingest/{id}/approve` | Pydantic `field_validator` on `actor`, `reason` | 422 (Pydantic `value_error`) |
+| `POST /api/drawing/ingest/{id}/commit` | Pydantic `field_validator` on `actor`, `reason` | 422 |
+| `PATCH /api/drawing/ingest/{id}/graph` | Pydantic `field_validator` on `edited_by`, `note` | 422 |
+
+### Legacy `/improve/download` v0 shell-out
+
+The pre-17.6 code had a `revision_id == "v0"`
+special case in `/improve/download` that called
+`subprocess.run` to regenerate the STL. The 17.6
+sprint gates this codepath on
+`LEGACY_DOWNLOAD_AUTOGEN=1` (default off). The
+post-17.2a production path is the new
+`/api/improve/download/{machine}/{revision_id}`
+route, which does not have this special case.
+
+### Orchestrator safe-join
+
+`app/core/orchestrator.py` builds `rev_dir`
+with `safe_join("outputs", "revisions",
+machine_name, revision_id)`. On
+`UnsafePathError`, the orchestrator does **not**
+raise — the build is preserved as
+`promotion_mode="rejected_by_governance"`,
+`promoted=False`, `error="unsafe_path"`, and
+the audit trail records the rejection. This
+is the user-specified translation: **the build
+is preserved as `rejected_by_governance` so
+the audit trail shows what happened**.
+
+### Audit log sanitization
+
+`app/runtime/audit.py::_flush` wraps each
+`entry.detail` in `sanitize_audit_detail`. On
+`UnsafeTextError`, the detail is replaced with
+the sentinel `<detail rejected by sanitizer>`.
+The audit log is the last line of defense
+against log injection.
+
+### Test coverage
+
+- `tests/test_safe_path.py` — 19 boundary cases
+  for `safe_join`.
+- `tests/test_text_normalize.py` — 17 boundary
+  cases for the text normalizer.
+- `tests/test_approve_route.py` — 4 free-text
+  overflow cases (NUL, control char, length
+  cap, unicode acceptance).
+- `tests/test_commit_route.py` — 3 free-text
+  overflow cases.
+- `tests/test_patch_graph_route.py` — 4
+  free-text overflow cases.
+- `tests/test_drawing_ingest_routes.py` — 2
+  filename length-cap cases.
+
+### Audit document
+
+The full audit deliverable is at
+`docs/security/PHASE17_INPUT_INJECTION_AUDIT.md`.
+It records the threat model, the per-entry-point
+findings, the code-level enforcement, the CVE
+status of vision dependencies, and the broader
+taint model for future governance work.
+

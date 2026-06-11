@@ -180,6 +180,159 @@ recorded in the same global audit log.
   can still race; the platform's contract is "all
   writes go through `set_new_champion`."
 
+### Input-injection audit + filesystem trust-boundary hardening (task #34)
+
+Phase 17.6 #34 is the **filesystem trust-boundary hardening**
+sprint. The pre-#34 code had direct `os.path.join` and
+`os.path.normpath` calls at every point where an
+attacker-influenced value (a multipart `file.filename`, a
+URL-path segment, an OCR-extracted title-block `name`)
+became a path component. `#34` introduces a single canonical
+`safe_join` primitive and a `text_normalize` primitive, and
+wires them in at every boundary. The audit deliverable
+(`docs/security/PHASE17_INPUT_INJECTION_AUDIT.md`) records
+the threat model, the per-entry-point findings, the
+code-level enforcement, and the broader taint model for
+future governance work.
+
+#### Added
+
+- **`app/core/safe_path.py`** — the canonical
+  `safe_join(base_dir, *components)` primitive. The base
+  is the trust boundary, the components are untrusted.
+  The return is a `Path` that is guaranteed to be a
+  child of `base_dir` after `Path.resolve()`. On
+  violation: `UnsafePathError` (a `ValueError`
+  subclass). The implementation rejects absolute paths
+  (cross-platform — POSIX `/...` and Windows
+  `C:\\...`), `..` and `.` segments, NUL bytes, C0 /
+  C1 / DEL control characters, empty components, and
+  components over `MAX_SEGMENT_LENGTH` (256). The
+  total-path cap is `MAX_PATH_LENGTH` (4096). The
+  engineering symbol set (`Ø R THK ± °`) is preserved.
+- **`app/vision/text_normalize.py`** — the
+  **safe-preservation** primitive for OCR text and
+  operator free text. Three public functions:
+  - `normalize_ocr_text(text)` — for OCR text entering
+    a parser. NFC, BOM strip, NUL/control rejection;
+    `\t \n \r` preserved. No length cap.
+  - `sanitize_free_text(text, *, max_length=256)` —
+    for operator-supplied `actor`, `reason`,
+    `edited_by`, `note`. Same rules plus a length cap.
+  - `sanitize_audit_detail(detail)` — for the audit
+    log. Longer cap (1024) and explicit newline
+    handling.
+  All three preserve the full Unicode range — only
+  control characters are rejected.
+- **`docs/security/PHASE17_INPUT_INJECTION_AUDIT.md`**
+  — the audit deliverable. 11 sections covering
+  scope, entry points, threat model, findings (10
+  enumerated, F1–F10), out-of-scope items, CVE
+  status of vision dependencies, code-level
+  enforcement, broader taint model (documented for
+  future work), test coverage, manual smoke tests,
+  and audit closure.
+
+#### Changed (per-route hardening)
+
+- **`app/main.py::/upload`** — the route now
+  generates a server-side storage filename
+  (`uuid.uuid4().hex + suffix`) and persists the
+  original multipart filename as `original_filename`
+  metadata. The storage filename is path-safe by
+  construction. The original is length-capped and
+  control-char-rejected via `sanitize_free_text`.
+  F1 (direct path-traversal) is closed.
+- **`app/api/routes.py::/improve/download`** — the
+  route uses `safe_join` on `machine_name` and
+  `revision_id`. The legacy `revision_id == "v0"`
+  `subprocess.run` special case is gated on
+  `LEGACY_DOWNLOAD_AUTOGEN=1` (default off). F2
+  (direct path-traversal) is closed; F3 (legacy
+  shell-out) is mitigated.
+- **`app/api/routes.py::/drawing/ingest`** and
+  **`/drawing/ingest-and-build`** — both routes
+  sanitize `file.filename` at the route boundary
+  *before* the OCR pipeline runs. A NUL, control
+  character, or over-cap filename returns HTTP 400
+  with a structured `unsafe_filename` error body.
+  F7 (filename → manifest / audit) is closed.
+- **`app/api/routes.py::/approve`**,
+  **`/commit`**, **`PATCH /graph`** — Pydantic
+  `field_validator` calls `sanitize_free_text` on
+  `actor`, `reason`, `edited_by`, `note`. NUL and
+  control characters raise `UnsafeTextError` (a
+  `ValueError` subclass), which Pydantic translates
+  to HTTP 422. F6 (operator free-text → audit) is
+  closed.
+- **`app/core/orchestrator.py`** — `rev_dir` is now
+  `safe_join(...)`. On `UnsafePathError`, the
+  orchestrator does not raise; the build is
+  preserved as `promotion_mode=
+  "rejected_by_governance"`,
+  `promoted=False`, `error="unsafe_path"`. The
+  audit trail records the rejection. F4 is closed.
+- **`app/core/revisions.py`** — `archive_revision`
+  and `get_revision_manifest` use `safe_join`. The
+  helpers raise through; the caller (orchestrator
+  for writes, the route for reads) handles the
+  failure. F5 is closed.
+- **`app/vision/ingestion_store.py`** — `_path`
+  calls `_assert_safe_ingestion_id` (defensive
+  guard: rejects NUL, control chars, `..`, path
+  separators, length over 64). F9 is guarded.
+- **`app/vision/drawing_ingestor.py`** — wraps the
+  raw OCR text in `normalize_ocr_text` after
+  `extract_text`. On `UnsafeTextError`, the
+  pipeline returns a low-confidence result with a
+  warning rather than raising. F8 is closed.
+- **`app/runtime/audit.py`** — `_flush` wraps the
+  `detail` field in `sanitize_audit_detail`. On
+  `UnsafeTextError`, the detail is replaced with
+  the sentinel `<detail rejected by sanitizer>`.
+  The audit log is the last line of defense
+  against log injection.
+
+#### Test coverage
+
+- **`tests/test_safe_path.py`** (NEW, 19 tests) —
+  the boundary cases for `safe_join`:
+  legitimate engineering names, traversal
+  payloads, absolute paths (POSIX and Windows),
+  NUL bytes, control characters, empty / `None`
+  components, length caps, separator payloads,
+  backslash, max-path-length, zero components.
+- **`tests/test_text_normalize.py`** (NEW, 17
+  tests) — the boundary cases for the text
+  normalizer: engineering symbols preserved,
+  unicode dimensions preserved, NFC
+  normalization, BOM strip, NUL rejection,
+  control-char rejection, tab / LF / CR
+  preservation, free-text length cap, free-text
+  NUL rejection, free-text `None` handling,
+  free-text normal case, audit-detail with
+  newlines, audit-detail length cap,
+  audit-detail over-cap rejection.
+- **`tests/test_approve_route.py`** (4 new
+  tests) — NUL in `actor`, control char in
+  `reason`, length cap on `actor`, unicode
+  acceptance in `actor` and `reason`.
+- **`tests/test_commit_route.py`** (3 new
+  tests) — NUL in `actor`, control char in
+  `reason`, length cap on `actor`.
+- **`tests/test_patch_graph_route.py`** (4 new
+  tests) — NUL in `edited_by`, control char in
+  `note`, length cap on `edited_by`, unicode
+  acceptance in `edited_by` and `note`.
+- **`tests/test_drawing_ingest_routes.py`** (2
+  new tests) — over-cap filename 400, at-cap
+  filename acceptance.
+
+Total: **49 new tests** for #34. The pre-#34
+platform test count was 1290; the post-#34 count
+is **1339 passed, 8 skipped** (49 net new, 0
+regressions).
+
 ---
 
 ## [Unreleased] — Phase 17.4 — "Hemp Decorticator Validation Pack"
