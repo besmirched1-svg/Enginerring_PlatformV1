@@ -1057,11 +1057,33 @@ this commit.
       it by default; the rate-limit test file
       overrides to enable the limiter for its
       own cases).
-- [ ] Audit log for every ingestion: who uploaded,
-      when, what was extracted, what was committed.
-      (The champion-promotion audit log from the
-      first item is in place; the per-ingestion
-      audit log is a separate item.)
+- [x] **Audit log for every ingestion event**
+      (commit landed). Five new event-action
+      names are written to the global audit log
+      from the route layer's success path:
+      `drawing_ingested` (on `POST /drawing/
+      ingest`), `graph_patched` (on PATCH
+      `/drawing/ingest/{id}/graph`),
+      `review_state_transitioned` (on POST
+      `/approve`), and the
+      `commit_attempted` + `commit_succeeded`
+      pair (on POST `/commit`). The
+      `commit_attempted` entry is always
+      written for a 200 response, even when the
+      gate refused (`rejected_by_governance`);
+      `commit_succeeded` is written only for
+      the non-rejected outcomes. The
+      orchestrator's pre-existing
+      `champion_promoted` entry is additive
+      and stays. The audit write is non-fatal
+      (try/except). The audit log is the
+      **complete forensic record** of an
+      ingestion's lifecycle: a single
+      `grep "ing_abc" outputs/audit/
+      audit_*.jsonl` returns the full sequence
+      from upload through commit (or
+      rejection). 8 regression tests in
+      `tests/test_ingestion_audit_log.py`.
 
 ---
 

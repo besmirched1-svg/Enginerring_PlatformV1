@@ -435,6 +435,23 @@ The safe-path and text-normalize primitives are called at the
 - **Vision parsers (app/vision/drawing_ingestor.py)** —
   `normalize_ocr_text` at the entry of `extract_text`
   (file #8–#11, F8).
+- **Audit log writes from the route layer
+  (app/api/routes.py, Phase 17.6 task #35)** — the audit
+  log itself is a boundary position. The five new
+  event-action names written from the route layer's
+  success path (`drawing_ingested`, `graph_patched`,
+  `review_state_transitioned`, `commit_attempted`,
+  `commit_succeeded`) carry the operator's
+  Pydantic-sanitized `actor` and `edited_by` and the
+  route's `reason` (already sanitized at the body-
+  parsing boundary). The `username` is `"anonymous"`
+  for `drawing_ingested` (multipart upload with no
+  operator identity) and the sanitized actor
+  otherwise. The audit write is non-fatal — wrapped
+  in `try / except` so a failure of the audit-log
+  write cannot roll back an ingestion's state. The
+  last line of defense is `sanitize_audit_detail` in
+  `audit._flush` (file #16, above).
 
 ## 8. Broader taint model (future work)
 
@@ -545,10 +562,21 @@ The audit's test coverage is:
   `edited_by` and `note`).
 - `tests/test_drawing_ingest_routes.py` — 2 filename
   length-cap cases (over-cap 400, at-cap acceptance).
+- `tests/test_ingestion_audit_log.py` (NEW, 8 tests,
+  Phase 17.6 #35) — the audit log entry on every
+  drawing-ingest event: `drawing_ingested`,
+  `graph_patched`, `review_state_transitioned`, the
+  `commit_attempted` + `commit_succeeded` pair on
+  success, the `commit_attempted`-only path on
+  `rejected_by_governance`, fault-injection
+  non-fatality, full-lifecycle ordering, and
+  sanitized-actor flow-through.
 
-Total: **49 new tests** for #34 (19 + 17 + 4 + 3 + 4 + 2).
-The platform's pre-#34 test count was 1290; the post-#34
-count is **1339 passed, 8 skipped** (49 net new, 0
+Total: **49 new tests** for #34 (19 + 17 + 4 + 3 + 4 + 2)
+plus **8 new tests** for #35, **57 total new tests**
+for the Phase 17.6 sprint. The platform's pre-#34
+test count was 1290; the post-#35 count is
+**1350 passed, 8 skipped** (57 net new, 0
 regressions).
 
 ## 10. Manual smoke tests (verification)

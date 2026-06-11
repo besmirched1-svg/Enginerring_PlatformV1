@@ -675,6 +675,95 @@ behavior; the LEGACY intent synthesized for them
 has `actor="unknown"` and `reason=None`, which
 flow into the audit trail the same way.
 
+### Audit log coverage of the drawing-ingest lifecycle (task #35)
+
+Phase 17.6 task #35 extends the audit log to cover
+the operator's full drawing-ingest authoring flow.
+The five new event-action names are written to
+`outputs/audit/audit_YYYYMMDD.jsonl` from the
+route layer's success path, matching the existing
+`champion_promoted` write pattern. The audit log
+becomes the **complete forensic record** of an
+ingestion's lifecycle: a single
+`grep "ing_abc" outputs/audit/audit_*.jsonl`
+returns the full sequence from upload through
+commit (or rejection).
+
+| Event-action | Route | When written | Detail keys |
+|--------------|-------|--------------|-------------|
+| `drawing_ingested` | `POST /api/drawing/ingest` | After the IngestionStore snapshot is written, before the 200 response | `ingestion_id`, `source_file`, `machine_name`, `graph_hash`, `confidence`, `ocr_confidence`, `node_count`, `edge_count`, `warnings_count` |
+| `graph_patched` | `PATCH /api/drawing/ingest/{id}/graph` | After the IngestionStore PATCH record is appended, before the 200 response | `ingestion_id`, `edited_by`, `edited_fields`, `new_graph_hash`, `patch_count`, `note` |
+| `review_state_transitioned` | `POST /api/drawing/ingest/{id}/approve` | After the ReviewStore transition succeeds, before the 200 response | `ingestion_id`, `from_state`, `to_state`, `actor`, `reason` |
+| `commit_attempted` | `POST /api/drawing/ingest/{id}/commit` | After the orchestrator's `run_machine_job` returns; **always** written for a 200 response, even on `rejected_by_governance` | `ingestion_id`, `machine_name`, `revision_id`, `promotion_mode`, `score`, `intent_source` |
+| `commit_succeeded` | `POST /api/drawing/ingest/{id}/commit` | After the COMMIT record is written and the review state is PROMOTED; **only** for the non-rejected outcomes | `ingestion_id`, `machine_name`, `revision_id`, `promotion_mode`, `score`, `actor`, `reason` |
+
+`commit_attempted` and `commit_succeeded` are a
+**pair** — every successful `/commit` call produces
+both entries. `commit_attempted` carries the gate's
+verdict (always, even when the gate refused);
+`commit_succeeded` carries the persistence
+confirmation. The orchestrator's existing
+`champion_promoted` is **additive** — it stays,
+and a forensic analyst can correlate it with
+`commit_succeeded` to verify the orchestrator's
+promotion block fired.
+
+**Success-only coverage.** The audit entries are
+written on the route's success path (the 200
+response). A 4xx / 5xx response does **not**
+produce an audit entry — failure paths are visible
+in the platform's request log, the response shape,
+and (for rate-limit 429s) the `rate_limit_exceeded`
+audit entry that the rate-limit module writes
+itself. The audit log records the operator's
+**successful state transitions**, not every
+request. This matches the orchestrator's existing
+pattern (`champion_promoted` is logged only when
+the gate authorized the promotion).
+
+**Non-fatal writes.** Every `log_action` call is
+wrapped in a `try / except`; a failure to write
+the audit entry is logged via `logger.error` and
+the route continues. The audit log is a derived
+view of the platform's state, not a primary record;
+the IngestionStore and ReviewStore are the source
+of truth. A failure of the audit-log write must
+not roll back an ingestion's state.
+
+**`username` (audit) vs `actor` (Pydantic).** The
+audit entry's top-level `username` field is the
+operator's Pydantic-sanitized identity — the same
+value the route echoes in the response body. For
+`drawing_ingested` (a multipart upload with no
+operator identity), `username="anonymous"`. For
+`/approve` and `/commit`, `username` is the
+sanitized `actor` (post-#34 Pydantic
+`field_validator`). The forensic analyst can
+`grep '"username":"alice"'` to find every action
+alice took.
+
+**`ip_address`.** Populated from `_client_ip(request)`
+(the same XFF-aware helper the rate-limit module
+uses). For `drawing_ingested`, this is the
+client's TCP peer (or XFF-leftmost when
+`TRUST_FORWARDED_FOR=1`). The IP correlates the
+upload to subsequent `/approve` and `/commit`
+calls from the same client.
+
+**JSON dict for `detail`.** Matches the existing
+`champion_promoted` shape. Downstream consumers
+parse with `json.loads(entry["detail"])` — a
+uniform shape across every event.
+
+**Test coverage:** `tests/test_ingestion_audit_log.py`
+— 8 regression tests (drawing_ingested, graph_patched,
+review_state_transitioned, the commit_attempted +
+commit_succeeded pair on success, the
+commit_attempted-only path on
+`rejected_by_governance`, fault-injection
+non-fatality, full-lifecycle ordering, sanitized
+actor flowing through to the audit entry).
+
 ## Cross-platform file lock (Phase 17.6)
 
 `app/core/champion_lock.py::file_lock` is the

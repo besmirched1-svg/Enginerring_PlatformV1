@@ -21,6 +21,8 @@ from app.vision.text_normalize import (
     sanitize_free_text,
     sanitize_audit_detail,
 )
+from app.runtime.audit import get_audit_logger
+from app.api.rate_limit import _client_ip
 
 logger = logging.getLogger("engine.api.routes")
 router = APIRouter()
@@ -471,6 +473,44 @@ async def ingest_drawing(
             graph_hash=graph_hash,
             warnings=list(warnings),
         )
+
+        # Phase 17.6 (task #35): the global
+        # audit log gets a ``drawing_ingested``
+        # entry. The audit log is the platform's
+        # chronological forensic record; this
+        # entry is the first signal in the
+        # ingestion's lifecycle. The
+        # ``username`` is ``anonymous`` (the
+        # multipart upload does not carry an
+        # operator identity; the operator
+        # arrives at /approve and /commit).
+        # The audit write is non-fatal: a
+        # failure here does not roll back the
+        # ingestion's state.
+        try:
+            get_audit_logger().log_action(
+                username="anonymous",
+                action="drawing_ingested",
+                resource=f"ingestion:{ingestion_id}",
+                detail=json.dumps({
+                    "ingestion_id": ingestion_id,
+                    "source_file": sanitized_filename,
+                    "machine_name": result.graph.name,
+                    "graph_hash": graph_hash,
+                    "confidence": result.confidence,
+                    "ocr_confidence": result.confidence,
+                    "node_count": len(result.graph.nodes),
+                    "edge_count": len(result.graph.edges),
+                    "warnings_count": len(warnings),
+                }),
+                ip_address=_client_ip(request),
+                success=True,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to write audit log (drawing_ingested): %s",
+                exc,
+            )
 
         return {
             "status": "ok",
@@ -2822,6 +2862,7 @@ class ReviewDecisionRequest(BaseModel):
 
 @router.post("/drawing/ingest/{ingestion_id}/approve")
 def approve_ingestion(
+    request: Request,
     ingestion_id: str,
     payload: ReviewDecisionRequest,
 ):
@@ -2951,6 +2992,32 @@ def approve_ingestion(
                 ),
                 "message": str(exc),
             },
+        )
+
+    # Phase 17.6 task #35: audit-log every review
+    # state transition. The audit log is a derived
+    # view (the ReviewStore NDJSON is the source of
+    # truth), so a failure to write the audit entry
+    # is non-fatal — we log the error and continue.
+    try:
+        get_audit_logger().log_action(
+            username=payload.actor,
+            action="review_state_transitioned",
+            resource=f"ingestion:{ingestion_id}",
+            detail=json.dumps({
+                "ingestion_id": ingestion_id,
+                "from_state": from_state.value,
+                "to_state": new_state.value,
+                "actor": payload.actor,
+                "reason": payload.reason,
+            }),
+            ip_address=_client_ip(request),
+            success=True,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to write audit log (review_state_transitioned): %s",
+            exc,
         )
 
     return {
@@ -3272,6 +3339,35 @@ def commit_ingestion(
         revision_intent=intent,
     )
 
+    # Phase 17.6 (task #35): the audit log
+    # records every /commit attempt. The
+    # ``commit_attempted`` entry captures the
+    # orchestrator's promotion_mode (the gate's
+    # verdict) regardless of whether the commit
+    # was ultimately accepted. The audit write
+    # is non-fatal.
+    try:
+        get_audit_logger().log_action(
+            username=payload.actor,
+            action="commit_attempted",
+            resource=f"ingestion:{ingestion_id}",
+            detail=json.dumps({
+                "ingestion_id": ingestion_id,
+                "machine_name": current.get("machine_name", "unknown"),
+                "revision_id": run_result.get("revision_id"),
+                "promotion_mode": run_result.get("promotion_mode"),
+                "score": run_result.get("score"),
+                "intent_source": "explicit_commit",
+            }),
+            ip_address=_client_ip(request),
+            success=True,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to write audit log (commit_attempted): %s",
+            exc,
+        )
+
     # The orchestrator's promotion_mode decides
     # whether the commit record is written and
     # whether the state is transitioned to
@@ -3349,6 +3445,40 @@ def commit_ingestion(
         raise HTTPException(
             status_code=500,
             detail=f"State transition failed: {exc}",
+        )
+
+    # Phase 17.6 (task #35): the audit log
+    # records the commit's successful
+    # persistence. The ``commit_succeeded``
+    # entry is paired with the earlier
+    # ``commit_attempted``: the first captures
+    # the gate's verdict, this captures the
+    # persistence confirmation (COMMIT record
+    # written, review state PROMOTED). The
+    # orchestrator's own ``champion_promoted``
+    # audit entry is additive and stays. The
+    # audit write is non-fatal.
+    try:
+        get_audit_logger().log_action(
+            username=payload.actor,
+            action="commit_succeeded",
+            resource=f"ingestion:{ingestion_id}",
+            detail=json.dumps({
+                "ingestion_id": ingestion_id,
+                "machine_name": current.get("machine_name", "unknown"),
+                "revision_id": run_result.get("revision_id"),
+                "promotion_mode": promotion_mode,
+                "score": run_result.get("score"),
+                "actor": payload.actor,
+                "reason": payload.reason or "Commit endpoint called.",
+            }),
+            ip_address=_client_ip(request),
+            success=True,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to write audit log (commit_succeeded): %s",
+            exc,
         )
 
     return {
@@ -3453,6 +3583,7 @@ class PatchGraphRequest(BaseModel):
 
 @router.patch("/drawing/ingest/{ingestion_id}/graph")
 def patch_ingestion_graph(
+    request: Request,
     ingestion_id: str,
     payload: PatchGraphRequest,
 ):
@@ -3527,10 +3658,41 @@ def patch_ingestion_graph(
     # Return the new state summary so the
     # operator can verify the patch was applied.
     current = ingestion_store.read_current(ingestion_id)
+    patch_count = current.get("patch_count", 0)
+
+    # Phase 17.6 (task #35): the audit log
+    # gets a ``graph_patched`` entry. The
+    # ``username`` is the operator's
+    # ``edited_by`` (Pydantic-sanitized at
+    # the body-parsing boundary; this is the
+    # post-#34 safe-preservation value). The
+    # audit write is non-fatal.
+    try:
+        get_audit_logger().log_action(
+            username=payload.edited_by,
+            action="graph_patched",
+            resource=f"ingestion:{ingestion_id}",
+            detail=json.dumps({
+                "ingestion_id": ingestion_id,
+                "edited_by": payload.edited_by,
+                "edited_fields": list(payload.edited_fields),
+                "new_graph_hash": new_graph_hash,
+                "patch_count": patch_count,
+                "note": payload.note,
+            }),
+            ip_address=_client_ip(request),
+            success=True,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to write audit log (graph_patched): %s",
+            exc,
+        )
+
     return {
         "status": "ok",
         "ingestion_id": ingestion_id,
         "graph_hash": new_graph_hash,
-        "patch_count": current.get("patch_count", 0),
+        "patch_count": patch_count,
         "edited_by": payload.edited_by,
     }
