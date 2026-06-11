@@ -364,6 +364,35 @@ async def ingest_drawing(
         request.state.ratelimit_remaining
     )
 
+    # Phase 17.6 (task #34): filename sanitization
+    # at the route boundary. A user-supplied
+    # filename with NUL bytes or a length above
+    # MAX_FILENAME_LENGTH is rejected with HTTP
+    # 400 BEFORE any OCR / pipeline work runs, so
+    # the response is informative (4xx with the
+    # error class) rather than a generic 500 from
+    # the inner try/except. The sanitized value
+    # is what flows into the IngestionStore
+    # snapshot, the MachineGraph metadata, and
+    # the audit log.
+    from app.vision.text_normalize import (
+        UnsafeTextError as UnsafeText,
+    )
+    try:
+        sanitized_filename = sanitize_free_text(
+            file.filename or "upload",
+            max_length=MAX_FILENAME_LENGTH,
+        )
+    except UnsafeText as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsafe_filename",
+                "filename": file.filename,
+                "message": str(exc),
+            },
+        )
+
     from app.vision.constants import CONFIDENCE_FLOOR
     from app.vision.upload_validation import validate_and_stage_upload
     from app.vision.ingestion_store import IngestionStore
@@ -416,9 +445,10 @@ async def ingest_drawing(
         IngestionStore().write_snapshot(
             ingestion_id,
             # Phase 17.6 (task #34): the user-
-            # supplied filename is sanitized
-            # before it flows into the
-            # IngestionStore snapshot, the
+            # supplied filename was sanitized
+            # at the route boundary (above).
+            # The sanitized value flows into
+            # the IngestionStore snapshot, the
             # MachineGraph metadata, the
             # manifest's ingestion_path, and
             # the audit log. The 128-char cap
@@ -428,10 +458,7 @@ async def ingest_drawing(
             # long user-controlled string
             # would still bloat the audit log
             # and the manifest.
-            source_file=sanitize_free_text(
-                file.filename or "upload",
-                max_length=MAX_FILENAME_LENGTH,
-            ),
+            source_file=sanitized_filename,
             machine_name=result.graph.name,
             graph=graph_dict,
             bom_rows=list(result.bom_rows),
@@ -583,6 +610,30 @@ async def ingest_drawing_and_build(
         request.state.ratelimit_remaining
     )
 
+    # Phase 17.6 (task #34): filename
+    # sanitization at the route boundary,
+    # before any pipeline work. Same shape
+    # as the /drawing/ingest route: 400 on
+    # NUL / over-cap, sanitized value used
+    # downstream.
+    from app.vision.text_normalize import (
+        UnsafeTextError as UnsafeText,
+    )
+    try:
+        sanitized_filename = sanitize_free_text(
+            file.filename or "upload",
+            max_length=MAX_FILENAME_LENGTH,
+        )
+    except UnsafeText as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsafe_filename",
+                "filename": file.filename,
+                "message": str(exc),
+            },
+        )
+
     import hashlib
     from app.vision.constants import CONFIDENCE_FLOOR
     from app.vision.upload_validation import validate_and_stage_upload
@@ -606,14 +657,15 @@ async def ingest_drawing_and_build(
         )
 
         result = ingest(Path(tmp_path))
-        # Phase 17.6 (task #34): free-text
-        # sanitization on the user-supplied
-        # filename. Same treatment as
-        # /drawing/ingest.
-        source_file = sanitize_free_text(
-            file.filename or "upload",
-            max_length=MAX_FILENAME_LENGTH,
-        )
+        # Phase 17.6 (task #34): the user-
+        # supplied filename was sanitized
+        # at the route boundary (above the
+        # try block). The sanitized value is
+        # used here so the IngestionStore
+        # snapshot, the MachineGraph
+        # metadata, and the audit log all
+        # carry the safe value.
+        source_file = sanitized_filename
 
         # ----- Build the standard ingestion response ----------
         # Same shape as /drawing/ingest (Phase 17.1 contract).

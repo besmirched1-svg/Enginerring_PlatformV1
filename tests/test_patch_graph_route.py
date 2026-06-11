@@ -389,3 +389,107 @@ def test_patch_without_note_persists_none(
         records = [json.loads(ln) for ln in f if ln.strip()]
     patch_rec = next(r for r in records if r["record_kind"] == "patch")
     assert patch_rec["note"] is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 17.6 (#34): free-text sanitization on the
+# ``edited_by`` and ``note`` fields of the PATCH
+# /graph route. Same Pydantic-validator pattern
+# as /approve and /commit.
+# ---------------------------------------------------------------------------
+
+
+def test_patch_rejects_edited_by_with_nul_byte(
+    client, monkeypatch, tmp_path, seeded_draft_ingestion,
+):
+    """An ``edited_by`` with a NUL byte is
+    rejected with HTTP 422. The validator
+    fires at body-parsing time, before the
+    route body runs."""
+    monkeypatch.chdir(tmp_path)
+    new_graph = {
+        "name": "test_machine", "revision": "v0",
+        "nodes": {}, "edges": [],
+    }
+    response = client.patch(
+        f"/api/drawing/ingest/{seeded_draft_ingestion}/graph",
+        json={
+            "edited_by": "alice\x00bob",
+            "graph": new_graph,
+            "edited_fields": [],
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_patch_rejects_note_with_control_char(
+    client, monkeypatch, tmp_path, seeded_draft_ingestion,
+):
+    """A ``note`` with a control character is
+    rejected with HTTP 422. The note flows
+    into the PATCH record and the audit log;
+    a control char there is a log-injection
+    vector."""
+    monkeypatch.chdir(tmp_path)
+    new_graph = {
+        "name": "test_machine", "revision": "v0",
+        "nodes": {}, "edges": [],
+    }
+    response = client.patch(
+        f"/api/drawing/ingest/{seeded_draft_ingestion}/graph",
+        json={
+            "edited_by": "alice",
+            "graph": new_graph,
+            "edited_fields": [],
+            "note": "edited\x01log-injection",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_patch_rejects_edited_by_over_length_cap(
+    client, monkeypatch, tmp_path, seeded_draft_ingestion,
+):
+    """An ``edited_by`` over MAX_FREE_TEXT_LENGTH
+    is rejected with HTTP 422."""
+    monkeypatch.chdir(tmp_path)
+    from app.vision.text_normalize import MAX_FREE_TEXT_LENGTH
+    long_name = "a" * (MAX_FREE_TEXT_LENGTH + 1)
+    new_graph = {
+        "name": "test_machine", "revision": "v0",
+        "nodes": {}, "edges": [],
+    }
+    response = client.patch(
+        f"/api/drawing/ingest/{seeded_draft_ingestion}/graph",
+        json={
+            "edited_by": long_name,
+            "graph": new_graph,
+            "edited_fields": [],
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_patch_accepts_unicode_note(
+    client, monkeypatch, tmp_path, seeded_draft_ingestion,
+):
+    """A unicode ``note`` is accepted. The
+    safe-preservation discipline preserves
+    engineering symbols and international
+    text intact; only control characters
+    and NUL are rejected."""
+    monkeypatch.chdir(tmp_path)
+    new_graph = {
+        "name": "test_machine", "revision": "v0",
+        "nodes": {}, "edges": [],
+    }
+    response = client.patch(
+        f"/api/drawing/ingest/{seeded_draft_ingestion}/graph",
+        json={
+            "edited_by": "engineer_jörg",
+            "graph": new_graph,
+            "edited_fields": [],
+            "note": "Reviewed Ø100 R12.5 — confirmed.",
+        },
+    )
+    assert response.status_code == 200, response.text

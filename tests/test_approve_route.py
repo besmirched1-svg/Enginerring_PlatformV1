@@ -482,3 +482,94 @@ def test_approve_without_reason_persists_none(
         rec = json.loads(f.readline())
     assert rec["reason"] is None
     assert "ts" in rec
+
+
+# ---------------------------------------------------------------------------
+# Phase 17.6 (#34): free-text sanitization on the operator
+# ``actor`` and ``reason`` fields. The Pydantic
+# ``field_validator`` raises ``UnsafeTextError`` on
+# NUL bytes, control characters, or over-cap text.
+# FastAPI translates the ``ValueError`` to HTTP 422.
+# ---------------------------------------------------------------------------
+
+
+def test_approve_rejects_actor_with_nul_byte(
+    client, monkeypatch, tmp_path, seeded_ingestion_id,
+):
+    """An ``actor`` with a NUL byte is rejected
+    with HTTP 422. The Pydantic validator
+    sanitizes the field at the body-parsing
+    boundary, before the route body runs."""
+    monkeypatch.chdir(tmp_path)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_ingestion_id}/approve",
+        json={
+            "to_state": "pending_review",
+            "actor": "alice\x00bob",
+            "reason": "test",
+        },
+    )
+    assert response.status_code == 422, response.text
+    # Pydantic's error envelope names the field
+    # path and the violation class.
+    body = response.json()
+    assert "detail" in body
+
+
+def test_approve_rejects_reason_with_control_char(
+    client, monkeypatch, tmp_path, seeded_ingestion_id,
+):
+    """A ``reason`` with a C0 control character
+    is rejected with HTTP 422. The control char
+    would have been a log-injection vector."""
+    monkeypatch.chdir(tmp_path)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_ingestion_id}/approve",
+        json={
+            "to_state": "pending_review",
+            "actor": "alice",
+            "reason": "approved\x01log-injection-attempt",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_approve_rejects_actor_over_length_cap(
+    client, monkeypatch, tmp_path, seeded_ingestion_id,
+):
+    """An ``actor`` exceeding MAX_FREE_TEXT_LENGTH
+    is rejected with HTTP 422. The cap is a
+    hard ceiling — the boundary check fires
+    regardless of the free-text's content."""
+    monkeypatch.chdir(tmp_path)
+    from app.vision.text_normalize import MAX_FREE_TEXT_LENGTH
+    long_actor = "a" * (MAX_FREE_TEXT_LENGTH + 1)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_ingestion_id}/approve",
+        json={
+            "to_state": "pending_review",
+            "actor": long_actor,
+            "reason": "test",
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_approve_accepts_unicode_actor(
+    client, monkeypatch, tmp_path, seeded_ingestion_id,
+):
+    """A unicode ``actor`` is accepted. The
+    safe-preservation discipline preserves
+    engineering and international text intact;
+    only control characters and NUL are
+    rejected."""
+    monkeypatch.chdir(tmp_path)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_ingestion_id}/approve",
+        json={
+            "to_state": "pending_review",
+            "actor": "engineer_jörg",
+            "reason": "Reviewer notes: Ø100 drum OK.",
+        },
+    )
+    assert response.status_code == 200, response.text

@@ -125,3 +125,86 @@ def test_route_rejects_mixed_case_extension(client) -> None:
         f"lowercase before lookup. status={response.status_code}, "
         f"body={response.text[:200]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 17.6 (#34): free-text sanitization at the route boundary.
+# ---------------------------------------------------------------------------
+
+
+def test_route_rejects_overlong_filename(client) -> None:
+    """A filename longer than MAX_FILENAME_LENGTH
+    is rejected with HTTP 400 BEFORE any OCR
+    pipeline work runs. The error body names the
+    ``unsafe_filename`` class and the violation
+    class (``free text too long``).
+
+    Regression guard: pre-#34, this path raised
+    inside the inner ``try/except`` and the route
+    returned 500. Post-#34, the boundary check
+    fires first and returns 400.
+    """
+    from app.core.safe_path import MAX_FILENAME_LENGTH
+
+    overlong = "a" * (MAX_FILENAME_LENGTH + 1) + ".pdf"
+    response = client.post(
+        "/api/drawing/ingest",
+        files={
+            "file": (
+                overlong,
+                io.BytesIO(b"fake pdf content"),
+                "application/pdf",
+            ),
+        },
+    )
+    assert response.status_code == 400, (
+        f"Overlong filename should be rejected with 400, got "
+        f"{response.status_code}. body={response.text[:200]}"
+    )
+    detail = response.json().get("detail", {})
+    assert isinstance(detail, dict), (
+        f"400 detail should be a structured dict, got {type(detail).__name__}"
+    )
+    assert detail.get("error") == "unsafe_filename"
+    assert "too long" in detail.get("message", "").lower()
+
+
+def test_route_accepts_filename_at_length_cap(client) -> None:
+    """A filename at exactly MAX_FILENAME_LENGTH
+    characters is accepted (the cap is
+    ``<= MAX_FILENAME_LENGTH``). The boundary
+    check rejects one character over, accepts
+    one character at.
+
+    This pins the cap boundary so a future
+    off-by-one in the comparison is caught.
+    """
+    from app.core.safe_path import MAX_FILENAME_LENGTH
+
+    # The cap includes the suffix. Build a stem
+    # that is exactly cap-minus-suffix long.
+    suffix = ".pdf"
+    stem = "a" * (MAX_FILENAME_LENGTH - len(suffix))
+    at_cap = stem + suffix
+    assert len(at_cap) == MAX_FILENAME_LENGTH
+    response = client.post(
+        "/api/drawing/ingest",
+        files={
+            "file": (
+                at_cap,
+                io.BytesIO(b"fake pdf content"),
+                "application/pdf",
+            ),
+        },
+    )
+    # The exact status code is not 4xx — the
+    # boundary check passed. The pipeline may
+    # 500 on the synthetic body, but never on
+    # the filename.
+    if response.status_code == 400:
+        detail = response.json().get("detail", {})
+        assert detail.get("error") != "unsafe_filename", (
+            f"Filename at exactly MAX_FILENAME_LENGTH should "
+            f"pass the boundary check, but got 400 with "
+            f"unsafe_filename: {detail}"
+        )

@@ -591,3 +591,56 @@ def test_commit_rejected_by_governance_does_not_write_commit_or_transition(
         ReviewStore().read_current_state(seeded_approved_ingestion)
         == ReviewState.APPROVED
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 17.6 (#34): free-text sanitization on the operator
+# ``actor`` and ``reason`` fields of the /commit route.
+# Same Pydantic-validator pattern as /approve. NUL
+# bytes, control characters, and over-cap text are
+# rejected with HTTP 422 BEFORE the route body runs.
+# ---------------------------------------------------------------------------
+
+
+def test_commit_rejects_actor_with_nul_byte(
+    client, monkeypatch, tmp_path, seeded_approved_ingestion,
+):
+    """An ``actor`` with a NUL byte is rejected
+    with HTTP 422. The Pydantic validator fires
+    at body-parsing time."""
+    monkeypatch.chdir(tmp_path)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_approved_ingestion}/commit",
+        json={"actor": "alice\x00bob", "reason": "Ship it."},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_commit_rejects_reason_with_control_char(
+    client, monkeypatch, tmp_path, seeded_approved_ingestion,
+):
+    """A ``reason`` with a C0 control character
+    is rejected with HTTP 422. Control chars
+    in audit-log content are the standard
+    log-injection vector."""
+    monkeypatch.chdir(tmp_path)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_approved_ingestion}/commit",
+        json={"actor": "alice", "reason": "approved\x1bfake"},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_commit_rejects_actor_over_length_cap(
+    client, monkeypatch, tmp_path, seeded_approved_ingestion,
+):
+    """An ``actor`` over MAX_FREE_TEXT_LENGTH
+    is rejected with HTTP 422."""
+    monkeypatch.chdir(tmp_path)
+    from app.vision.text_normalize import MAX_FREE_TEXT_LENGTH
+    long_actor = "a" * (MAX_FREE_TEXT_LENGTH + 1)
+    response = client.post(
+        f"/api/drawing/ingest/{seeded_approved_ingestion}/commit",
+        json={"actor": long_actor, "reason": "test"},
+    )
+    assert response.status_code == 422, response.text
