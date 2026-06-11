@@ -4,6 +4,7 @@ import logging
 import json
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from app.cad.renderer import render_stl
@@ -13,11 +14,19 @@ from app.core.evaluation import (
 )
 
 from app.bom.generator import generate_bom
-from app.core.revisions import archive_revision, update_promotion_status
-from app.core.promotion import get_current_champion, should_promote, set_new_champion
+from app.core.champion_lock import file_lock
+from app.core.promotion import (
+    CHAMPION_LOCK_FILE_PATH,
+    CHAMPION_POINTER_FILE,
+    get_current_champion,
+    should_promote,
+    set_new_champion,
+)
 from app.core.promotion_gate import promotion_allowed
 from app.core.lineage import log_design_evolution
 from app.core.notifier import dispatch_cluster_alert
+from app.core.revisions import archive_revision, update_promotion_status
+from app.runtime.audit import get_audit_logger
 
 # The RevisionIntent type lives in app.vision (where the
 # intent_adapter constructs it). The orchestrator is a
@@ -370,25 +379,114 @@ class EngineeringOrchestrator:
         # review state. This is the "completed !=
         # promotable" semantic transition made live.
         if gate_allowed and old_rev != "v0" and is_promoted:
-            if set_new_champion(machine_name, revision_id, score):
-                try:
-                    update_promotion_status(machine_name, revision_id, "champion")
-                except Exception:
-                    pass
-                log_design_evolution(machine_name, old_rev, revision_id, old_score, score, reason)
-                dispatch_cluster_alert(
-                    title=f"CHAMPION PROMOTED: {machine_name}",
-                    text=f"Revision [{revision_id}] outscored baseline ({old_score:.2f} -> {score:.2f}).",
-                    alert_level="SUCCESS"
-                )
-                self._emit_event("revision_promoted", {
-                    "machine_name": machine_name,
-                    "revision_id": revision_id,
-                    "score": score,
-                    "stl_path": stl_path,
-                    "stl_url": self._make_stl_url(machine_name, revision_id),
-                })
-                promotion_triggered = True
+            # Phase 17.6: assemble the audit metadata
+            # that flows into the champion pointer,
+            # the manifest, the lineage log, and the
+            # global audit log. The dict is built
+            # once and threaded through all four
+            # writes so the audit record is
+            # internally consistent.
+            audit_metadata = {
+                "actor": (
+                    revision_intent.actor
+                    if revision_intent is not None
+                    else "unknown"
+                ),
+                "reason": (
+                    revision_intent.reason
+                    if revision_intent is not None
+                    else None
+                ),
+                "intent_source": (
+                    revision_intent.intent_source.value
+                    if revision_intent is not None
+                    else "legacy"
+                ),
+                "ingestion_id": (
+                    revision_intent.ingestion_id
+                    if revision_intent is not None
+                    else None
+                ),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            # The four writes that follow must be
+            # atomic as a group. The cross-platform
+            # file lock on the champion pointer
+            # serializes concurrent promotions on
+            # both POSIX and Windows. Pre-17.6, the
+            # four writes were unprotected; the
+            # ``fcntl.flock`` site covered only the
+            # first, and only on POSIX. The new
+            # ``file_lock`` covers all four on both
+            # platforms.
+            with file_lock(CHAMPION_POINTER_FILE):
+                if set_new_champion(
+                    machine_name, revision_id, score,
+                    audit_metadata=audit_metadata,
+                ):
+                    try:
+                        update_promotion_status(
+                            machine_name, revision_id, "champion",
+                            audit_metadata=audit_metadata,
+                        )
+                    except Exception:
+                        pass
+                    log_design_evolution(
+                        machine_name, old_rev, revision_id,
+                        old_score, score, reason,
+                        audit_metadata=audit_metadata,
+                    )
+                    # The global audit log is the
+                    # human-readable summary of every
+                    # promotion. The legacy CLI
+                    # ``audit`` command reads it back
+                    # for operators. The
+                    # ``log_action`` call is
+                    # non-fatal: an audit-log write
+                    # failure does not roll back the
+                    # promotion (the champion pointer
+                    # and lineage log are the
+                    # source-of-truth records; the
+                    # audit log is a derived view).
+                    try:
+                        get_audit_logger().log_action(
+                            username=audit_metadata["actor"],
+                            action="champion_promoted",
+                            resource=(
+                                f"machine:{machine_name}:{revision_id}"
+                            ),
+                            detail=json.dumps({
+                                "machine_name": machine_name,
+                                "revision_id": revision_id,
+                                "old_revision": old_rev,
+                                "old_score": old_score,
+                                "new_score": score,
+                                "intent_source": audit_metadata["intent_source"],
+                                "ingestion_id": audit_metadata["ingestion_id"],
+                                "reason": audit_metadata["reason"],
+                            }),
+                            success=True,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to write audit log entry for "
+                            "%s %s; champion pointer and lineage "
+                            "log are still authoritative.",
+                            machine_name, revision_id,
+                        )
+                    dispatch_cluster_alert(
+                        title=f"CHAMPION PROMOTED: {machine_name}",
+                        text=f"Revision [{revision_id}] outscored baseline ({old_score:.2f} -> {score:.2f}).",
+                        alert_level="SUCCESS"
+                    )
+                    self._emit_event("revision_promoted", {
+                        "machine_name": machine_name,
+                        "revision_id": revision_id,
+                        "score": score,
+                        "stl_path": stl_path,
+                        "stl_url": self._make_stl_url(machine_name, revision_id),
+                    })
+                    promotion_triggered = True
 
         return {
             "revision_id": revision_id,

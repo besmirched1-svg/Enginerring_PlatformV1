@@ -2915,6 +2915,11 @@ def commit_ingestion(
         review_state=review_state,
         ingestion_id=ingestion_id,
         actor=payload.actor,
+        # Phase 17.6: the operator's free-text reason
+        # for the commit. Threaded into the
+        # RevisionIntent and onward to the audit
+        # log when the promotion block fires.
+        reason=payload.reason,
     ))
 
     # The gate's verdict is the authoritative one.

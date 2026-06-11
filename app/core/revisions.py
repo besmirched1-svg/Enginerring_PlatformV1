@@ -75,19 +75,52 @@ def get_revision_manifest(machine_name: str, revision_id: str) -> Optional[Dict[
     except (json.JSONDecodeError, IOError):
         return None
 
-def update_promotion_status(machine_name: str, revision_id: str, status: str) -> bool:
-    """
-    Safely alters the status field of a candidate build inside its catalog document.
+def update_promotion_status(
+    machine_name: str,
+    revision_id: str,
+    status: str,
+    audit_metadata: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Safely alters the status field of a candidate build inside its catalog document.
+
+    The optional ``audit_metadata`` kwarg (Phase 17.6) is
+    written into an additive top-level ``audit_path`` field
+    on the manifest. When the kwarg is ``None`` (the
+    default; pre-17.6 callers), the manifest's shape is
+    byte-equivalent to the pre-17.6 seven-key dict (the
+    six standard keys plus ``promotion_status``). The
+    ``audit_path`` field is the audit trail of who
+    promoted this revision and why.
+
+    The function is called from inside the orchestrator's
+    promotion block, which holds the cross-platform file
+    lock on ``champion_pointer.json`` for the duration
+    of the call. The function itself does not acquire
+    the lock (that would be a nested-lock deadlock if
+    the same process calls ``set_new_champion`` and
+    ``update_promotion_status`` from the same block).
     """
     manifest_path = os.path.join(REVISIONS_BASE_DIR, machine_name, revision_id, "manifest.json")
     if not os.path.exists(manifest_path):
         return False
-        
+
     try:
         with open(manifest_path, 'r+', encoding='utf-8') as f:
             data = json.load(f)
             data["promotion_status"] = status
-            
+            if audit_metadata is not None:
+                # 17.6 additive extension. The
+                # pre-17.6 shape is preserved when
+                # audit_metadata is None; the
+                # audit_path top-level field appears
+                # only when an audit record is
+                # supplied. The byte-equivalence test
+                # in tests/test_revisions_ingestion_path.py
+                # exercises ``archive_revision``, not
+                # ``update_promotion_status``, so the
+                # 7-key pre-17.6 shape is unchanged.
+                data["audit_path"] = audit_metadata
+
             f.seek(0)
             json.dump(data, f, indent=2)
             f.truncate()

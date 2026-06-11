@@ -117,6 +117,9 @@ class IntentRequestContext:
     - ``actor``: who initiated the request. Used
       for the audit log. Defaults to
       ``"unknown"``.
+    - ``reason``: the operator's free-text reason
+      for the commit, or ``None``. Phase 17.6
+      addition. Used for the audit log.
     """
 
     request_kind: IntentRequestKind
@@ -124,6 +127,7 @@ class IntentRequestContext:
     review_state: Optional[ReviewState] = None
     ingestion_id: Optional[str] = None
     actor: str = "unknown"
+    reason: Optional[str] = None  # Phase 17.6
 
 
 def build_intent(context: IntentRequestContext) -> RevisionIntent:
@@ -183,6 +187,8 @@ def _build_for_auto_build(context: IntentRequestContext) -> RevisionIntent:
         intent_source=IntentSource.AUTO_BUILD,
         review_state=context.review_state,
         ingestion_id=context.ingestion_id,
+        actor=context.actor,
+        reason=context.reason,
     )
 
 
@@ -222,6 +228,8 @@ def _build_for_explicit_commit(context: IntentRequestContext) -> RevisionIntent:
         intent_source=IntentSource.EXPLICIT_COMMIT,
         review_state=context.review_state,
         ingestion_id=context.ingestion_id,
+        actor=context.actor,
+        reason=context.reason,
     )
 
 
@@ -248,6 +256,9 @@ def _build_for_dry_run(context: IntentRequestContext) -> RevisionIntent:
         intent_source=IntentSource.DRY_RUN,
         review_state=None,
         ingestion_id=None,
+        # Dry-runs keep the default actor="unknown"
+        # and reason=None. A dry-run is by definition
+        # not attributed to a human operator.
     )
 
 

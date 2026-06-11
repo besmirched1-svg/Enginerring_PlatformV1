@@ -974,16 +974,32 @@ sub-phase after 17.4.
 
 ## 7. 17.6 — Production Hardening
 
-Per spec §7.6. **Not started.** Placeholder for the
-final sub-phase.
+Per spec §7.6. **In progress.** Sub-phase
+items land as separate commits; the
+champion-pointer lock + audit log landed in
+this commit.
 
 ### 17.6 Checklist
 
+- [x] **Cross-platform champion-pointer lock +
+      audit log** (commit landed). The four-
+      write promotion block is now wrapped in
+      a single `app.core.champion_lock.file_lock`
+      that works on POSIX and Windows without
+      a new dependency. Operator identity
+      (`actor`, `reason`) flows end-to-end from
+      the route to the champion pointer, the
+      lineage log, the revision manifest, and
+      the global audit log at
+      `outputs/audit/audit_YYYYMMDD.jsonl`.
 - [ ] Audit the vision pipeline for input-injection
       attacks. Document the audit.
 - [ ] Rate limiting on the ingest route.
 - [ ] Audit log for every ingestion: who uploaded,
       when, what was extracted, what was committed.
+      (The champion-promotion audit log from the
+      first item is in place; the per-ingestion
+      audit log is a separate item.)
 
 ---
 

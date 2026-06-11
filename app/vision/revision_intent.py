@@ -100,7 +100,7 @@ class RevisionIntent:
     The intent_adapter (in this module) is the only
     legitimate constructor.
 
-    A RevisionIntent encodes four things:
+    A RevisionIntent encodes six things:
 
     1. ``commit_requested``: True if the caller wants
        this build to be committed (i.e., become a
@@ -111,6 +111,14 @@ class RevisionIntent:
     3. ``intent_source``: the audit-trail differentiator
        that says who/what produced the intent.
     4. ``ingestion_id``: the source ingestion, if any.
+    5. ``actor``: the operator username, or
+       ``"unknown"``. Phase 17.6 addition. The
+       orchestrator threads this into the per-promotion
+       audit log and the champion pointer's audit
+       subkey. The promotion_gate does not read it.
+    6. ``reason``: the operator's free-text reason for
+       the commit, or ``None``. Phase 17.6 addition.
+       Threads into the same audit trail.
 
     Legacy callers (the pre-17.3 ``/api/improve/register``
     route, test harnesses, internal jobs) do not pass
@@ -126,6 +134,8 @@ class RevisionIntent:
     intent_source: IntentSource
     review_state: Optional[ReviewState] = None
     ingestion_id: Optional[str] = None
+    actor: str = "unknown"           # Phase 17.6
+    reason: Optional[str] = None     # Phase 17.6
 
     def __post_init__(self) -> None:
         # Defensive validation. The intent_adapter

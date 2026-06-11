@@ -276,6 +276,24 @@ route returns HTTP 409 with `error: not_approved`.
 `PROMOTED`, the ingestion is frozen; further
 `/approve` or `/commit` calls return HTTP 409.
 
+**Every successful promotion is recorded in
+the global audit log at
+`outputs/audit/audit_YYYYMMDD.jsonl`.** The
+audit entry carries your `actor` name, your
+`reason` message, the score delta, the source
+ingestion, and the intent source
+(`EXPLICIT_COMMIT`, `AUTO_BUILD`, or `LEGACY`).
+The audit log is human-readable; the
+platform's `cli.py audit` command reads it
+back. The audit metadata is also written to
+the champion pointer, the lineage log entry,
+and the revision manifest as additive
+subkeys — so a single promotion leaves four
+on-disk records, all written as a group under
+a cross-platform file lock. See
+`docs/PHASE17_API.md` §"Audit log" for the
+full schema.
+
 ## Step 5 — Download
 
 **Endpoint:** `GET /api/improve/download/{machine_name}/{revision_id}`

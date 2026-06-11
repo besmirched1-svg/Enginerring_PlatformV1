@@ -10,6 +10,124 @@ same scheme (e.g. ``v1.0.0-rc1``).
 
 ---
 
+## [Unreleased] — Phase 17.6 — "Champion-Pointer Lock + Audit Log"
+
+Phase 17.6 hardens the four-write promotion block
+(champion pointer, manifest `promotion_status`, lineage
+log, global audit log) with a single cross-platform file
+lock and wires the operator's `actor` and `reason` into
+the audit trail end-to-end. The pre-17.6 code had a
+`fcntl.flock` site that was silently a no-op on Windows
+and covered only the first of the four writes; the
+new `app.core.champion_lock` module fixes both gaps
+without adding a dependency.
+
+### Added
+
+- **`app/core/champion_lock.py`** — the cross-platform
+  `file_lock` context manager. Uses `fcntl.flock` on
+  POSIX and `msvcrt.locking` on Windows (with a
+  short-poll retry loop, since `msvcrt.locking` is
+  mandatory, not advisory, and raises `PermissionError`
+  on contention rather than blocking). Backing file is
+  `<path>.lock` (sibling of the protected file). Falls
+  back to a no-op with a one-time warning if neither
+  primitive is importable.
+- **`RevisionIntent.actor`** and **`RevisionIntent.reason`**
+  — two additive fields. The intent_adapter's
+  `IntentRequestContext` already accepted `actor` (but
+  discarded it); 17.6 threads both `actor` and `reason`
+  through to the constructed `RevisionIntent` and
+  onward to the audit log. Defaults: `actor="unknown"`,
+  `reason=None`. Legacy callers see byte-equivalent
+  behavior.
+- **Audit metadata in the four on-disk records:**
+  - The champion pointer (`champion_pointer.json`)
+    gains an additive `audit` subkey on the per-machine
+    entry.
+  - The lineage log (`lineage_history.json`) gains an
+    additive `audit` subkey on the per-promotion entry.
+  - The revision manifest gains an additive top-level
+    `audit_path` field.
+  - The global audit log (`outputs/audit/audit_YYYYMMDD.jsonl`)
+    gains `champion_promoted` entries with `username`,
+    `resource`, and a JSON `detail` carrying the score,
+    intent_source, and ingestion_id.
+- **`tests/test_champion_lock.py`** — 6 tests pinning
+  the cross-platform lock's behavior (basic
+  acquire/release, exception-safety, concurrent
+  serialization with `threading.Barrier(2)`,
+  no-op fallback, platform detection).
+- **`tests/test_promotion_audit_log.py`** — 8 tests
+  pinning the additive audit shape (3 champion
+  pointer cases, 2 lineage cases, 2 manifest cases,
+  2 end-to-end audit-log cases including a LEGACY
+  intent path).
+
+### Changed
+
+- **`app/core/promotion.py::set_new_champion`** — no
+  longer acquires the file lock internally. The
+  orchestrator's promotion block is the single
+  lock-holder for the four-write group; nested
+  acquires deadlock on Windows because `msvcrt.locking`
+  is mandatory and raises on contention. Direct
+  callers (tests, scripts) acquire the lock
+  themselves. New additive `audit_metadata` kwarg
+  controls the on-disk `audit` subkey.
+- **`app/core/lineage.py::log_design_evolution`** —
+  new additive `audit_metadata` kwarg. Same shape
+  as the champion pointer's audit subkey.
+- **`app/core/revisions.py::update_promotion_status`** —
+  new additive `audit_metadata` kwarg. Writes to
+  the manifest's `audit_path` top-level field.
+- **`app/core/orchestrator.py::run_machine_job`** —
+  the four-write promotion block (lines 372-391) is
+  wrapped in a single `with file_lock(...)` and
+  threads the `audit_metadata` dict through to all
+  four writes. A non-fatal `try/except` around the
+  audit log call ensures a logger write failure does
+  not roll back the promotion.
+- **`app/api/routes.py`** — the `/commit` route's
+  `IntentRequestContext` now passes `reason=payload.reason`
+  so the operator's free-text reason flows into the
+  intent and onward to the audit log.
+
+### Backward compatibility
+
+- The pre-17.6 on-disk shapes are preserved byte-
+  equivalent when the new `audit_metadata` kwarg is
+  `None` (the default): the champion pointer stays
+  a 3-key entry; the lineage log entry stays
+  6-key; the manifest stays 7-key. The audit log
+  has no entries when no promotion occurs.
+- Pre-17.6 callers that do not pass a
+  `RevisionIntent` see byte-equivalent orchestrator
+  behavior; the LEGACY intent synthesized for them
+  has `actor="unknown"` and `reason=None`, which
+  flow into the audit log the same way as
+  17.6-sourced intents.
+
+### Locking discipline
+
+- The orchestrator holds the lock for the entire
+  four-write group. Pre-17.6, the four writes were
+  unprotected (the `fcntl.flock` covered only the
+  champion pointer and only on POSIX).
+- `set_new_champion`, `log_design_evolution`, and
+  `update_promotion_status` do NOT acquire the lock
+  themselves. They expect their caller to be the
+  lock-holder. This avoids nested-acquire deadlocks
+  on Windows and keeps the lock discipline in one
+  place.
+- The lock is **advisory** on POSIX, **mandatory**
+  on Windows. A process that opens the champion
+  pointer file directly without acquiring the lock
+  can still race; the platform's contract is "all
+  writes go through `set_new_champion`."
+
+---
+
 ## [Unreleased] — Phase 17.4 — "Hemp Decorticator Validation Pack"
 
 Phase 17.4 is the **regression suite** for all

@@ -583,3 +583,126 @@ pre-17.3 for callers that do not pass the
 kwarg. The kwarg discipline is inherited from
 17.2a: additive, optional, default `None`,
 no new mandatory params.
+
+## Audit log (Phase 17.6)
+
+Every champion promotion is recorded in four
+places, all written as a group under a single
+cross-platform file lock on
+`outputs/revisions/champion_pointer.json`:
+
+1. **`outputs/audit/audit_YYYYMMDD.jsonl`** — the
+   global audit log. Each promotion is one line:
+
+   ```json
+   {
+     "timestamp": "2026-06-11T12:34:56+00:00",
+     "username": "alice",
+     "action": "champion_promoted",
+     "resource": "machine:hopper:rev_xyz",
+     "detail": "{\"machine_name\":\"hopper\",\"revision_id\":\"rev_xyz\",\"old_revision\":\"rev_prior\",\"old_score\":0.78,\"new_score\":0.85,\"intent_source\":\"explicit_commit\",\"ingestion_id\":\"ing_abc\",\"reason\":\"looked good\"}",
+     "success": true
+   }
+   ```
+
+2. **`outputs/revisions/champion_pointer.json`** —
+   the per-machine value gains an additive
+   `audit` subkey with the same metadata:
+
+   ```json
+   {
+     "machine_name": "hopper",
+     "revision": "rev_xyz",
+     "score": 0.85,
+     "audit": {
+       "actor": "alice",
+       "reason": "looked good",
+       "intent_source": "explicit_commit",
+       "ingestion_id": "ing_abc",
+       "timestamp": "2026-06-11T12:34:56+00:00"
+     }
+   }
+   ```
+
+3. **`outputs/revisions/lineage_history.json`** —
+   the per-promotion entry gains an additive
+   `audit` subkey with the same shape.
+
+4. **`outputs/revisions/<machine>/<rev>/manifest.json`**
+   — gains an additive top-level `audit_path`
+   field with the same shape.
+
+**The four writes are atomic as a group** under
+`app.core.champion_lock.file_lock`. The lock is
+advisory on POSIX (`fcntl.flock`) and mandatory
+on Windows (`msvcrt.locking`, with a short-poll
+retry loop). Pre-17.6, the four writes were
+unprotected; the `fcntl.flock` site covered only
+the champion pointer, and only on POSIX.
+
+**Pre-17.6 on-disk shapes are preserved** when
+the new `audit_metadata` kwarg is `None` (the
+default). The 3-key champion pointer, the 6-key
+lineage entry, and the 7-key manifest are
+byte-equivalent to the pre-17.6 output. The
+audit log is the only new on-disk record; it
+is created on the first promotion that flows
+through the new code path.
+
+**Operator identity flows end-to-end:**
+
+```
+route layer
+  payload.actor + payload.reason
+    IntentRequestContext.actor + .reason
+      RevisionIntent.actor + .reason          (NEW in 17.6)
+        orchestrator's audit_metadata dict
+          set_new_champion(audit_metadata=...)
+            -> champion_pointer.json[audit]
+          update_promotion_status(audit_metadata=...)
+            -> manifest.json[audit_path]
+          log_design_evolution(audit_metadata=...)
+            -> lineage_history.json[*][audit]
+          get_audit_logger().log_action(...)
+            -> audit_YYYYMMDD.jsonl
+```
+
+Pre-17.6 callers (the legacy
+`/api/improve/register` route, test harnesses,
+internal jobs) that do not pass a
+`RevisionIntent` see byte-equivalent orchestrator
+behavior; the LEGACY intent synthesized for them
+has `actor="unknown"` and `reason=None`, which
+flow into the audit trail the same way.
+
+## Cross-platform file lock (Phase 17.6)
+
+`app/core/champion_lock.py::file_lock` is the
+single cross-platform locking primitive the
+platform uses. It is a context manager:
+
+```python
+from app.core.champion_lock import file_lock
+
+with file_lock("outputs/revisions/champion_pointer.json"):
+    # read-modify-write the champion pointer safely
+    ...
+```
+
+The lock file is `<path>.lock` (sibling to the
+protected file). The context manager blocks
+until the lock is acquired and releases on
+context exit (normal or exceptional). On
+platforms with neither `fcntl` nor `msvcrt`
+(no real platform today), the lock degrades
+to a no-op with a one-time warning.
+
+The lock is **advisory** on POSIX, **mandatory**
+on Windows. A process that opens the protected
+file directly without acquiring the lock can
+still race on POSIX; on Windows the kernel
+blocks the second opener. The platform's
+contract is "all writes go through
+`set_new_champion`," and the orchestrator
+acquires the lock for the entire four-write
+group.
