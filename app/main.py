@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Header
@@ -12,6 +13,7 @@ from socketio import ASGIApp
 from app.api import routes as api_routes
 from app.api import websocket as ws_module
 from app.core.events import get_event_bus
+from app.core.safe_path import safe_join, UnsafePathError
 from app.realtime.events import sio, route_event_to_socketio
 
 logger = logging.getLogger("engine.main")
@@ -82,13 +84,89 @@ async def get_dashboard():
 
 @app.post("/upload", tags=["files"])
 async def upload_files(files: list[UploadFile] = File(...)):
+    """Generic file upload endpoint.
+
+    The pre-17.6 code path used
+    ``os.path.join(UPLOADS_DIR, file.filename)``
+    directly, which is a path-traversal
+    vulnerability: ``file.filename`` is
+    attacker-controlled and a payload like
+    ``../../../etc/passwd`` escapes the
+    uploads directory. Phase 17.6 (task #34)
+    hardens this with a safe-path boundary and
+    a server-generated storage filename.
+
+    The fix follows the user-specified pattern:
+
+    1. The original ``file.filename`` is
+       preserved as ``original_filename``
+       metadata in the response.
+    2. The storage filename is server-generated
+       (``uuid4().hex`` + a lowercased suffix
+       extracted from the original).
+    3. The path is verified by ``safe_join``,
+       the canonical filesystem trust-boundary
+       primitive.
+
+    A request with a payload like
+    ``filename=../../etc/passwd`` is rejected
+    with HTTP 400 and an ``unsafe_filename``
+    error. The original filename is *not*
+    used as a path component.
+    """
     os.makedirs(UPLOADS_DIR, exist_ok=True)
     saved = []
     for file in files:
-        dest = os.path.join(UPLOADS_DIR, file.filename)
+        # Preserve the original filename as
+        # metadata. We do not trust the
+        # filename as a path component.
+        original = file.filename or "upload"
+        # Extract and lowercase the suffix for
+        # the storage filename. The suffix is
+        # not validated against SUPPORTED_FILE_TYPES
+        # here because /upload is the legacy
+        # generic upload endpoint, not the
+        # drawing-ingest endpoint. The drawing-
+        # ingest endpoint has its own
+        # validate_and_stage_upload helper.
+        suffix = os.path.splitext(original)[1].lower()
+        # Server-generated storage filename. The
+        # uuid4().hex is 32 hex chars; combined
+        # with the suffix it cannot contain
+        # ``..``, ``/``, ``\\``, NUL, or control
+        # characters. safe_join's length cap
+        # (256 chars) is well above 32+8.
+        storage_name = f"{uuid.uuid4().hex}{suffix}"
+        try:
+            dest = safe_join(UPLOADS_DIR, storage_name)
+        except UnsafePathError as exc:
+            # The server-generated storage name
+            # is structurally safe; this branch
+            # would only fire if UPLOADS_DIR
+            # itself is misconfigured (e.g. a
+            # symlink chain that resolves
+            # outside the trust boundary). Fail
+            # closed with a 400.
+            logger.error(
+                "safe_join rejected storage path "
+                "UPLOADS_DIR=%r storage_name=%r err=%s",
+                UPLOADS_DIR, storage_name, exc,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unsafe_filename",
+                    "message": (
+                        f"Filename failed safe-path check: {exc}"
+                    ),
+                },
+            )
         with open(dest, "wb") as buf:
             buf.write(await file.read())
-        saved.append(file.filename)
+        saved.append({
+            "storage_filename": storage_name,
+            "original_filename": original,
+        })
     return {"status": "ok", "files": saved}
 
 @app.get("/health", tags=["ops"])

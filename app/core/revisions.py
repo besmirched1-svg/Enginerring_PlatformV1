@@ -4,6 +4,8 @@ import logging
 from typing import Any, Dict, Optional
 from pathlib import Path
 
+from app.core.safe_path import safe_join, UnsafePathError
+
 logger = logging.getLogger("engine.revisions")
 
 REVISIONS_BASE_DIR = "outputs/revisions"
@@ -23,9 +25,24 @@ def archive_revision(
     top-level ``ingestion_path`` field. When ``None`` (the default), the
     manifest is byte-identical to its pre-17.2a shape — the additive
     extension is invisible to any caller that does not opt in.
+
+    Phase 17.6 (task #34): the
+    ``machine_name`` + ``revision_id`` pair
+    is untrusted (the former is OCR-derived,
+    the latter user-supplied). The pre-17.6
+    code path used ``os.path.join(REVISIONS_BASE_DIR, machine_name, revision_id)``
+    directly — a path-traversal finding (F4
+    in the input-injection audit). safe_join
+    enforces the filesystem trust boundary
+    at the entry of the helper. On
+    ``UnsafePathError`` the helper raises
+    through; the orchestrator translates the
+    failure to ``rejected_by_governance``.
     """
-    rev_dir = os.path.join(REVISIONS_BASE_DIR, machine_name, revision_id)
-    os.makedirs(rev_dir, exist_ok=True)
+    rev_dir = safe_join(
+        REVISIONS_BASE_DIR, machine_name, revision_id,
+    )
+    rev_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = {
         "machine_name": machine_name,
@@ -44,21 +61,40 @@ def archive_revision(
     if ingestion_path is not None:
         manifest["ingestion_path"] = ingestion_path
 
-    manifest_path = os.path.join(rev_dir, "manifest.json")
+    manifest_path = rev_dir / "manifest.json"
     with open(manifest_path, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2)
 
     logger.info(f"Saved manifest record to: {manifest_path}")
-    return rev_dir
+    return str(rev_dir)
 
 def get_revision_manifest(machine_name: str, revision_id: str) -> Optional[Dict[str, Any]]:
     """
     Reads architectural records cleanly, processing older configurations backwards-compatibly.
+
+    Phase 17.6 (task #34): same safe-path
+    boundary as ``archive_revision``. Returns
+    ``None`` on ``UnsafePathError`` (the caller
+    treats None as "not found", which is
+    indistinguishable from a missing file
+    from the route's perspective).
     """
-    manifest_path = os.path.join(REVISIONS_BASE_DIR, machine_name, revision_id, "manifest.json")
-    if not os.path.exists(manifest_path):
+    try:
+        manifest_path = safe_join(
+            REVISIONS_BASE_DIR, machine_name, revision_id, "manifest.json",
+        )
+    except UnsafePathError:
+        # Treat the unsafe path as a not-found
+        # result. The route layer returns 404
+        # for both "path traversal" and
+        # "manifest does not exist" — a
+        # consistent 404 is the right
+        # response for an attacker probing the
+        # trust boundary.
         return None
-        
+    if not manifest_path.exists():
+        return None
+
     try:
         with open(manifest_path, 'r', encoding='utf-8') as f:
             data = json.load(f)

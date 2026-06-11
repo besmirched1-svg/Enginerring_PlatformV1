@@ -26,6 +26,7 @@ from app.core.promotion_gate import promotion_allowed
 from app.core.lineage import log_design_evolution
 from app.core.notifier import dispatch_cluster_alert
 from app.core.revisions import archive_revision, update_promotion_status
+from app.core.safe_path import safe_join, UnsafePathError
 from app.runtime.audit import get_audit_logger
 
 # The RevisionIntent type lives in app.vision (where the
@@ -107,12 +108,47 @@ class EngineeringOrchestrator:
         parent_info = {"chain_id": chain_id, "attempt_in_chain": attempt_in_chain, "parent_revision": old_rev} if chain_id else None
         
         self._emit_event("build_started", {"machine_name": machine_name, "revision_id": revision_id, "chain_id": chain_id})
-        
-        rev_dir = os.path.normpath(os.path.join("outputs", "revisions", machine_name, revision_id))
-        os.makedirs(rev_dir, exist_ok=True)
-        
-        scad_path = os.path.join(rev_dir, "model.scad")
-        stl_path = os.path.join(rev_dir, "output.stl")
+
+        # Phase 17.6 (task #34): safe-path
+        # boundary on machine_name +
+        # revision_id. The pre-17.6 code path
+        # used ``os.path.normpath(os.path.join(...))``
+        # which collapses ``..`` without
+        # verifying the result is still inside
+        # the trust boundary — a path-traversal
+        # finding (F3 in the input-injection
+        # audit). safe_join rejects the payload
+        # at the boundary; the orchestrator
+        # translates the rejection to a
+        # structured failure
+        # (``promotion_mode="rejected_by_governance"``,
+        # ``error="unsafe_path"``) so the audit
+        # trail records what happened and the
+        # operator can investigate.
+        try:
+            rev_dir = safe_join(
+                "outputs", "revisions", machine_name, revision_id,
+            )
+        except UnsafePathError as exc:
+            logger.error(
+                "Unsafe revision path: machine=%r rev=%r err=%s",
+                machine_name, revision_id, exc,
+            )
+            return {
+                "status": "ok",
+                "promotion_mode": "rejected_by_governance",
+                "promoted": False,
+                "score": None,
+                "directory": None,
+                "revision_id": revision_id,
+                "machine_name": machine_name,
+                "error": "unsafe_path",
+                "message": str(exc),
+            }
+        rev_dir.mkdir(parents=True, exist_ok=True)
+
+        scad_path = str(rev_dir / "model.scad")
+        stl_path = str(rev_dir / "output.stl")
         
         with open(scad_path, 'w', encoding='utf-8') as sf:
             sf.write(self._generate_scad_template(config))
@@ -131,7 +167,7 @@ class EngineeringOrchestrator:
             # ``output.stl`` (the renderer names it after the SCAD
             # stem, which is ``model.stl`` for the orchestrator's
             # pipeline). The user/UI contract is ``output.stl``.
-            final_stl_path = os.path.join(rev_dir, "output.stl")
+            final_stl_path = str(rev_dir / "output.stl")
             try:
                 if os.path.abspath(stl_path) != os.path.abspath(final_stl_path):
                     if os.path.exists(stl_path):
@@ -142,7 +178,7 @@ class EngineeringOrchestrator:
 
             # Rename the PNG to the user-facing name ``preview.png``
             # so the revision directory matches the documented layout.
-            preview_path = os.path.join(rev_dir, "preview.png")
+            preview_path = str(rev_dir / "preview.png")
             try:
                 if os.path.abspath(png_path) != os.path.abspath(preview_path):
                     if os.path.exists(png_path):

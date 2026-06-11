@@ -99,6 +99,66 @@ def ingest(file_path: Path) -> IngestionResult:
 
     # ── Step 1: Text extraction ───────────────────────────────────────────
     raw_text, text_confidence = extract_text(file_path)
+
+    # Phase 17.6 (task #34): OCR text
+    # normalization at the pipeline entry.
+    # The text from ``pdfplumber`` /
+    # ``pytesseract`` is untrusted. We
+    # NFC-normalize, strip a leading BOM,
+    # and reject control characters before
+    # any parser sees the text. The parsers'
+    # regex character classes already
+    # constrain the *output* to engineering-
+    # safe characters, so the parsers do not
+    # need their own normalizer. A NUL byte
+    # or a C0 control char in the raw text
+    # is never legitimate; if one slips
+    # through (e.g. via a PDF with embedded
+    # form data containing a control char),
+    # we treat the ingestion as failed and
+    # return a low-confidence result with a
+    # clear warning. The raw_text is also
+    # sanitized so the IngestionStore
+    # snapshot and the manifest's
+    # ``ingestion_path.source_file`` are
+    # free of control payloads.
+    from app.vision.text_normalize import (
+        normalize_ocr_text,
+        UnsafeTextError,
+    )
+    try:
+        raw_text = normalize_ocr_text(raw_text)
+    except UnsafeTextError as exc:
+        warnings.append(
+            f"OCR text rejected by normalizer: {exc}. "
+            f"Treating the ingestion as low-confidence; "
+            f"the drawing may contain control payloads."
+        )
+        # Return a partial, low-confidence
+        # result rather than raising. The
+        # route layer's confidence-floor
+        # check (CONFIDENCE_FLOOR = 0.30)
+        # will refuse auto-build on this
+        # result and the operator will see
+        # the warning.
+        from app.graph.models import MachineGraph as _MG
+        empty_graph = _MG(
+            graph_id="rejected",
+            name="rejected",
+            revision="v0",
+            metadata={"rejection_reason": str(exc)},
+        )
+        return IngestionResult(
+            graph=empty_graph,
+            yaml_config={},
+            title_block={},
+            bom_rows=[],
+            dimensions=[],
+            confidence=0.0,
+            warnings=warnings,
+            raw_text="",
+        )
+
     if text_confidence < 0.3:
         warnings.append(
             f"Low OCR confidence ({text_confidence:.2f}) — drawing may be "

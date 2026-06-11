@@ -99,7 +99,80 @@ class IngestionStore:
             return self._locks[ingestion_id]
 
     def _path(self, ingestion_id: str) -> Path:
+        # Phase 17.6 (task #34): lightweight
+        # structural-invariant guard. The
+        # ``ingestion_id`` is currently server-
+        # generated (``ing_<12 hex>`` at
+        # ``app/api/routes.py``), so this is
+        # defense-in-depth / future-proofing:
+        # if the ``ingestion_id`` ever became
+        # user-controllable, the structural
+        # invariant would catch the violation
+        # before the path is constructed. The
+        # check matches the route's
+        # generation pattern exactly.
+        self._assert_safe_ingestion_id(ingestion_id)
         return self.store_dir / f"{ingestion_id}.jsonl"
+
+    @staticmethod
+    def _assert_safe_ingestion_id(ingestion_id: str) -> None:
+        """Defensive structural-invariant guard.
+
+        The route generates ``ingestion_id`` as
+        ``f"ing_{uuid.uuid4().hex[:12]}"`` (a
+        literal prefix ``ing_`` followed by 12
+        lowercase hex chars). The guard checks
+        **what matters for filesystem safety**:
+        the ID must be a non-empty string with
+        no path separators, no NUL bytes, no
+        control characters, and no ``..``
+        segments. The guard does **not** enforce
+        the production format strictly — tests
+        use descriptive ``ing_test_*`` IDs and
+        the store should accept them.
+
+        On violation: ``ValueError``. The
+        IngestionStore is a low-level storage
+        layer; the route layer translates the
+        error to a 4xx response.
+        """
+        if not isinstance(ingestion_id, str):
+            raise ValueError(
+                f"ingestion_id must be str, got {type(ingestion_id).__name__}"
+            )
+        if not ingestion_id:
+            raise ValueError("ingestion_id is empty")
+        # Reject anything that would make this
+        # ID a path-traversal vector. The
+        # checks mirror ``safe_path``'s
+        # component rules (no separators, no
+        # NUL, no control chars, no ``..``).
+        if "/" in ingestion_id or "\\" in ingestion_id:
+            raise ValueError(
+                f"ingestion_id contains path separator: {ingestion_id!r}"
+            )
+        if "\x00" in ingestion_id:
+            raise ValueError(
+                f"ingestion_id contains NUL byte: {ingestion_id!r}"
+            )
+        if any(
+            ord(c) < 0x20 or ord(c) == 0x7F or 0x80 <= ord(c) <= 0x9F
+            for c in ingestion_id
+        ):
+            raise ValueError(
+                f"ingestion_id contains control character: {ingestion_id!r}"
+            )
+        if ".." in ingestion_id:
+            raise ValueError(
+                f"ingestion_id contains '..': {ingestion_id!r}"
+            )
+        # Length cap. The production format
+        # is 16 chars; we allow up to 64 to
+        # accommodate descriptive test IDs.
+        if len(ingestion_id) > 64:
+            raise ValueError(
+                f"ingestion_id too long: {len(ingestion_id)} > 64"
+            )
 
     def _append(self, ingestion_id: str, record: Dict[str, Any]) -> None:
         record.setdefault("ts", datetime.now(timezone.utc).isoformat())

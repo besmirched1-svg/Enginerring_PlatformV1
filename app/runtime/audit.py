@@ -52,10 +52,72 @@ class AuditLogger:
             return
         today = datetime.now(timezone.utc).strftime("%Y%m%d")
         path = self._log_path(today)
+        # Phase 17.6 (task #34): control-char
+        # rejection on the audit log. The
+        # ``detail`` field is the
+        # last-resort user-controlled field
+        # that flows into the log; every
+        # other caller has already been
+        # sanitized at the route boundary
+        # (Pydantic field_validators on
+        # actor / reason / edited_by / note),
+        # but a future caller that bypasses
+        # those validators (e.g. a CLI tool,
+        # an internal service) would still
+        # write through ``log_action``. The
+        # sanitization at ``_flush`` is the
+        # last line of defense against
+        # log-injection: if ``detail``
+        # contains a NUL byte or a C0/C1
+        # control char, the entry is still
+        # written (the audit trail is not
+        # silently dropped) but the detail
+        # is replaced with a sentinel so
+        # the NDJSON line structure is
+        # preserved and downstream parsers
+        # cannot be tricked by a control
+        # payload that breaks their
+        # line-reader.
+        try:
+            from app.vision.text_normalize import (
+                sanitize_audit_detail,
+                UnsafeTextError,
+            )
+        except Exception:
+            # The text_normalize module is
+            # unavailable (very unusual — it
+            # is a zero-dependency module);
+            # fall through to the pre-#34
+            # behavior of writing the entry
+            # verbatim. The risk is bounded:
+            # the route layer is the
+            # primary boundary.
+            sanitize_audit_detail = None
+            UnsafeTextError = Exception  # type: ignore[misc]
         try:
             with open(path, "a", encoding="utf-8") as f:
                 for entry in self._buffer:
-                    f.write(json.dumps(entry.to_dict()) + "\n")
+                    entry_dict = entry.to_dict()
+                    if sanitize_audit_detail is not None:
+                        try:
+                            entry_dict["detail"] = (
+                                sanitize_audit_detail(
+                                    entry_dict.get("detail", "")
+                                )
+                            )
+                        except UnsafeTextError:
+                            # Sentinel: the entry is
+                            # written, but the detail
+                            # is replaced with a
+                            # constant that names the
+                            # rejection. Downstream
+                            # parsers can grep for the
+                            # sentinel to surface the
+                            # anomaly.
+                            entry_dict["detail"] = (
+                                "<detail rejected by sanitizer>"
+                            )
+                    f.write(json.dumps(entry_dict) + "\n")
             self._buffer.clear()
         except Exception as exc:
             logger.error("Failed to write audit log: %s", exc)

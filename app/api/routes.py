@@ -7,10 +7,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Dict, Any, List, Optional
 from app.core.promotion import get_current_champion
 from app.core.events import get_event_bus
+from app.core.safe_path import (
+    MAX_FILENAME_LENGTH,
+    safe_join,
+    UnsafePathError,
+)
+from app.vision.text_normalize import (
+    UnsafeTextError,
+    sanitize_free_text,
+    sanitize_audit_detail,
+)
 
 logger = logging.getLogger("engine.api.routes")
 router = APIRouter()
@@ -196,23 +206,102 @@ def get_machine_lineage(machine_name: str):
 
 @router.get("/improve/download/{machine_name}/{revision_id}")
 def download_model_stl(machine_name: str, revision_id: str):
-    target_dir = os.path.join(ARCHIVE_ROOT, machine_name, revision_id)
-    stl_path = os.path.join(target_dir, "output.stl")
-    if revision_id == "v0":
-        os.makedirs(target_dir, exist_ok=True)
-        scad = os.path.join(target_dir, "model.scad")
-        if not os.path.exists(scad):
-            open(scad, "w").write("$fn=50; cylinder(h=150, r=30, center=true);")
-        if not os.path.exists(stl_path):
+    """Download the STL for a given machine + revision.
+
+    The pre-17.6 code path used
+    ``os.path.join(ARCHIVE_ROOT, machine_name, revision_id)``
+    directly, which is a path-traversal
+    vulnerability: ``machine_name`` is
+    OCR-derived (attacker-influenced) and
+    ``revision_id`` is user-supplied. A payload
+    like ``machine_name=../etc`` escaped
+    ``ARCHIVE_ROOT``.
+
+    Phase 17.6 (task #34) hardens this with the
+    canonical safe-path boundary. Both URL
+    parameters are untrusted; the safe-join
+    check rejects any payload that would
+    resolve outside ``ARCHIVE_ROOT``.
+
+    The route is the **legacy** download path.
+    The 17.2a replacement is
+    ``/api/improve/download/{machine_name}/{revision_id}``,
+    which itself uses ``safe_join`` and does
+    not have the ``v0`` special-case shell-out.
+    The legacy route is kept for backwards
+    compatibility but the ``revision_id ==
+    "v0"`` codepath that calls
+    ``subprocess.run(["openscad", ...])`` is
+    gated on the ``LEGACY_DOWNLOAD_AUTOGEN=1``
+    environment variable (default off). When
+    the env var is unset, a ``v0`` request
+    returns 404 instead of synthesizing a model
+    on disk.
+
+    Returns 200 with the STL on success. Returns
+    400 on an unsafe path. Returns 404 when the
+    STL does not exist.
+    """
+    try:
+        target_dir = safe_join(
+            ARCHIVE_ROOT, machine_name, revision_id,
+        )
+    except UnsafePathError as exc:
+        # The 400 is informative but does not
+        # echo the payload (echoing would let
+        # an attacker probe the safe-join rules
+        # with crafted URLs). The message
+        # names the violation class.
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsafe_path",
+                "message": (
+                    f"Path failed safe-join check: {exc}"
+                ),
+            },
+        )
+    stl_path = target_dir / "output.stl"
+    # DEPRECATED: the v0 special-case is gated
+    # on LEGACY_DOWNLOAD_AUTOGEN=1 (default off).
+    # The 17.2a replacement at the new
+    # /api/improve/download route does not
+    # have this codepath. Gating the
+    # subprocess.run call here means a
+    # request with revision_id == "v0" no
+    # longer invokes OpenSCAD in production
+    # unless an operator explicitly opts in.
+    if revision_id == "v0" and os.getenv(
+        "LEGACY_DOWNLOAD_AUTOGEN", "",
+    ).lower() in ("1", "true", "yes"):
+        target_dir.mkdir(parents=True, exist_ok=True)
+        scad = target_dir / "model.scad"
+        if not scad.exists():
+            scad.write_text(
+                "$fn=50; cylinder(h=150, r=30, center=true);",
+                encoding="utf-8",
+            )
+        if not stl_path.exists():
             try:
-                subprocess.run(["openscad", "-o", stl_path, scad],
-                               capture_output=True, timeout=10.0)
+                subprocess.run(
+                    ["openscad", "-o", str(stl_path), str(scad)],
+                    capture_output=True, timeout=10.0,
+                )
             except Exception:
-                open(stl_path, "w").write("solid empty\nendsolid empty")
-    if not os.path.exists(stl_path):
-        raise HTTPException(status_code=404, detail=f"STL not found: {revision_id}")
-    return FileResponse(path=stl_path, media_type="application/sla",
-                        filename=f"{machine_name}_{revision_id}.stl")
+                stl_path.write_text(
+                    "solid empty\nendsolid empty",
+                    encoding="utf-8",
+                )
+    if not stl_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"STL not found: {revision_id}",
+        )
+    return FileResponse(
+        path=str(stl_path),
+        media_type="application/sla",
+        filename=f"{machine_name}_{revision_id}.stl",
+    )
 
 
 # ── New architecture endpoints ──────────────────────────────────────────────
@@ -326,7 +415,23 @@ async def ingest_drawing(
 
         IngestionStore().write_snapshot(
             ingestion_id,
-            source_file=file.filename or "upload",
+            # Phase 17.6 (task #34): the user-
+            # supplied filename is sanitized
+            # before it flows into the
+            # IngestionStore snapshot, the
+            # MachineGraph metadata, the
+            # manifest's ingestion_path, and
+            # the audit log. The 128-char cap
+            # matches MAX_FILENAME_LENGTH from
+            # safe_path.py; the value here is
+            # not a path component, but a
+            # long user-controlled string
+            # would still bloat the audit log
+            # and the manifest.
+            source_file=sanitize_free_text(
+                file.filename or "upload",
+                max_length=MAX_FILENAME_LENGTH,
+            ),
             machine_name=result.graph.name,
             graph=graph_dict,
             bom_rows=list(result.bom_rows),
@@ -501,7 +606,14 @@ async def ingest_drawing_and_build(
         )
 
         result = ingest(Path(tmp_path))
-        source_file = file.filename or "upload"
+        # Phase 17.6 (task #34): free-text
+        # sanitization on the user-supplied
+        # filename. Same treatment as
+        # /drawing/ingest.
+        source_file = sanitize_free_text(
+            file.filename or "upload",
+            max_length=MAX_FILENAME_LENGTH,
+        )
 
         # ----- Build the standard ingestion response ----------
         # Same shape as /drawing/ingest (Phase 17.1 contract).
@@ -2634,6 +2746,27 @@ class ReviewDecisionRequest(BaseModel):
     actor: str
     reason: Optional[str] = None
 
+    @field_validator("actor")
+    @classmethod
+    def _validate_actor(cls, v: str) -> str:
+        # Phase 17.6 (task #34): free-text
+        # sanitization. The actor name flows
+        # into the IngestionStore snapshot
+        # (via the route's transition call)
+        # and the audit log. Length cap,
+        # NFC normalization, control-char
+        # rejection. ``UnsafeTextError`` is
+        # raised on violation — Pydantic
+        # translates to 422.
+        return sanitize_free_text(v)
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return sanitize_free_text(v)
+
 
 @router.post("/drawing/ingest/{ingestion_id}/approve")
 def approve_ingestion(
@@ -2857,6 +2990,23 @@ class CommitRequest(BaseModel):
     """
     actor: str
     reason: Optional[str] = None
+
+    @field_validator("actor")
+    @classmethod
+    def _validate_actor(cls, v: str) -> str:
+        # Phase 17.6 (task #34): free-text
+        # sanitization. The actor and reason
+        # are written to the IngestionStore's
+        # terminal COMMIT record and the audit
+        # log. Same rules as ReviewDecisionRequest.
+        return sanitize_free_text(v)
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return sanitize_free_text(v)
 
 
 @router.post("/drawing/ingest/{ingestion_id}/commit")
@@ -3218,6 +3368,35 @@ class PatchGraphRequest(BaseModel):
     graph: Dict[str, Any]
     edited_fields: List[str] = []
     note: Optional[str] = None
+
+    @field_validator("edited_by")
+    @classmethod
+    def _validate_edited_by(cls, v: str) -> str:
+        # Phase 17.6 (task #34): free-text
+        # sanitization. The edited_by field is
+        # the operator's identity on a PATCH
+        # record. It flows into the
+        # IngestionStore's PATCH record and the
+        # audit log. Same rules as
+        # ReviewDecisionRequest and
+        # CommitRequest.
+        return sanitize_free_text(v)
+
+    @field_validator("note")
+    @classmethod
+    def _validate_note(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return sanitize_free_text(v)
+
+    @field_validator("edited_fields")
+    @classmethod
+    def _validate_edited_fields(cls, v: List[str]) -> List[str]:
+        # edited_fields is a list of field-name
+        # strings. Sanitize each so a control
+        # character cannot land in the audit
+        # log via the field name.
+        return [sanitize_free_text(f) for f in v]
 
 
 @router.patch("/drawing/ingest/{ingestion_id}/graph")
