@@ -1,0 +1,16 @@
+{
+  "name": "frame",
+  "revision": "A",
+  "nodes": {
+    "frame": {
+      "node_id": "frame",
+      "node_type": "frame",
+      "label": "Frame",
+      "config": {},
+      "source": "drawing",
+      "confidence": 0.85,
+      "metadata": {}
+    }
+  },
+  "edges": []
+}

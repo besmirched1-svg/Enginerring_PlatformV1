@@ -1,0 +1,16 @@
+{
+  "name": "spindle",
+  "revision": "A",
+  "nodes": {
+    "spindle": {
+      "node_id": "spindle",
+      "node_type": "spindle",
+      "label": "Spindle",
+      "config": {},
+      "source": "drawing",
+      "confidence": 0.85,
+      "metadata": {}
+    }
+  },
+  "edges": []
+}

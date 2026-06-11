@@ -1,0 +1,16 @@
+{
+  "name": "drum",
+  "revision": "A",
+  "nodes": {
+    "drum": {
+      "node_id": "drum",
+      "node_type": "drum",
+      "label": "Drum",
+      "config": {},
+      "source": "drawing",
+      "confidence": 0.85,
+      "metadata": {}
+    }
+  },
+  "edges": []
+}

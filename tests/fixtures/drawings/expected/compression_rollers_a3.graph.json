@@ -1,0 +1,16 @@
+{
+  "name": "compression_rollers",
+  "revision": "A",
+  "nodes": {
+    "compression_rollers": {
+      "node_id": "compression_rollers",
+      "node_type": "compression_rollers",
+      "label": "CompressionRoller",
+      "config": {},
+      "source": "drawing",
+      "confidence": 0.85,
+      "metadata": {}
+    }
+  },
+  "edges": []
+}

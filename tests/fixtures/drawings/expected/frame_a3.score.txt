@@ -1,0 +1,6 @@
+TBD
+# The maintainer must run the manual reference config
+# for this subsystem through the orchestrator and record
+# the composite score minus 0.10 per spec §5.1.
+# See docs/VALIDATION_PACK_METHODOLOGY.md for the
+# baselining protocol.

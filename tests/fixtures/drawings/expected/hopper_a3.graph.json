@@ -1,0 +1,16 @@
+{
+  "name": "hopper",
+  "revision": "A",
+  "nodes": {
+    "hopper": {
+      "node_id": "hopper",
+      "node_type": "hopper",
+      "label": "Hopper",
+      "config": {},
+      "source": "drawing",
+      "confidence": 0.85,
+      "metadata": {}
+    }
+  },
+  "edges": []
+}

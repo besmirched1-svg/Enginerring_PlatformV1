@@ -1,0 +1,16 @@
+{
+  "name": "conveyor",
+  "revision": "A",
+  "nodes": {
+    "conveyor": {
+      "node_id": "conveyor",
+      "node_type": "conveyor",
+      "label": "Conveyor",
+      "config": {},
+      "source": "drawing",
+      "confidence": 0.85,
+      "metadata": {}
+    }
+  },
+  "edges": []
+}
