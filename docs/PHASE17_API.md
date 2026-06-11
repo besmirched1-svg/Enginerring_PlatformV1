@@ -1,0 +1,585 @@
+# Phase 17 API Reference (Developer-Facing)
+
+This document is the developer-facing reference
+for the Phase 17 drawing-ingestion surface. It
+covers the new routes added in 17.3, the
+`IngestionResult` schema, the manifest extension,
+and the cross-boundary contracts the routes
+enforce.
+
+> **Source of truth.** The OpenAPI spec at
+> <http://127.0.0.1:8000/openapi.json> is the
+> authoritative schema. This document summarises
+> it; if they disagree, the spec wins.
+>
+> **Operator view.** See
+> `docs/DRAWING_INGESTION.md` for the operator-
+> facing walkthrough of the upload → review →
+> commit flow.
+
+## Route inventory
+
+| Method | Path | Purpose | Added in |
+|--------|------|---------|----------|
+| POST   | `/api/drawing/ingest` | Issue `ingestion_id`, persist snapshot. **No** orchestrator call. | 17.3 (5/N) |
+| GET    | `/api/drawing/ingest/{ingestion_id}` | Read the stored IngestionResult + current review state. | 17.3 |
+| POST   | `/api/drawing/ingest/{ingestion_id}/approve` | Walk the review state. | 17.3 (3/N) |
+| PATCH  | `/api/drawing/ingest/{ingestion_id}/graph` | Operator-initiated graph edit. | 17.3 (6/N) |
+| POST   | `/api/drawing/ingest/{ingestion_id}/commit` | The only path that promotes. | 17.3 (4/N) |
+| POST   | `/api/drawing/ingest-and-build` | Opt-in auto-build shortcut. | 17.2a / 17.3 (8/N) |
+| POST   | `/api/improve/register` | Legacy YAML-submit route (now opt-in). | 17.3 (7/N) |
+
+## `POST /api/drawing/ingest`
+
+**Body:** multipart/form-data with a `file` part.
+
+**Validation:**
+
+- Extension must be in `SUPPORTED_FILE_TYPES`
+  (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.tif`,
+  `.tiff`, `.svg`, `.bmp`). HTTP 415 otherwise.
+- `Content-Length` must be `<=` 20 MiB
+  (`MAX_FILE_SIZE_BYTES`). HTTP 413 otherwise.
+- A streaming backstop with 64 KB chunks
+  enforces the size cap for chunked uploads
+  that lack a `Content-Length` header.
+
+**Side effects:**
+
+- Calls `app.vision.drawing_ingestor.ingest()`
+  on the staged file.
+- Persists a snapshot to the `IngestionStore`
+  at `outputs/drawings/ingestions/<id>.jsonl`.
+- The first write to the file carries
+  `record_kind: "snapshot"`.
+- No orchestrator call. No review-state
+  transition.
+
+**Response (200):**
+
+```json
+{
+  "status": "ok",
+  "ingestion_id": "ing_a3f2b1c4d5e6",
+  "graph_hash": "sha256:9f2e1a4b8c7d3f5a...",
+  "machine_name": "hopper",
+  "revision": "v0",
+  "confidence": 0.87,
+  "ocr_confidence": 0.87,
+  "node_count": 6,
+  "edge_count": 5,
+  "title_block": { "name": "Hopper", "revision": "v0" },
+  "bom_rows": [],
+  "dimensions": [],
+  "yaml_config": "{...}",
+  "graph": { "...": "..." },
+  "warnings": []
+}
+```
+
+**`ingestion_id` format:** `ing_` + 12-char
+lowercase hex (uuid4 hex truncated). Stable
+across the ingestion's lifetime.
+
+**`graph_hash` format:** `sha256:` + 64-char
+hex. Computed from `json.dumps(graph,
+sort_keys=True).encode("utf-8").hexdigest()`.
+Stable across equivalent graphs; unique across
+distinct ones.
+
+**Warnings** (non-fatal, may be empty):
+
+- `low_ocr_confidence` — `ocr_confidence < 0.30`.
+- `no_text_extracted` — text extraction returned
+  empty.
+- `confidence_below_floor` — overall confidence
+  below 0.30; the ingestion is persisted but
+  auto-build is disabled.
+
+**Errors:**
+
+- 413 — file too large.
+- 415 — unsupported file type.
+- 500 — pipeline failure (logged; the
+  `ingestion_id` is **not** issued).
+
+## `GET /api/drawing/ingest/{ingestion_id}`
+
+**Reads** the in-effect state from the
+`IngestionStore` (most recent snapshot + all
+subsequent patches applied in order) and the
+current review state from the `ReviewStore`.
+
+**Response (200):**
+
+```json
+{
+  "ingestion_id": "ing_abc",
+  "source_file": "hopper_a3.pdf",
+  "machine_name": "hopper",
+  "graph": { "...": "..." },
+  "graph_hash": "sha256:...",
+  "patch_count": 0,
+  "confidence": 0.87,
+  "title_block": { "...": "..." },
+  "bom_rows": [],
+  "dimensions": [],
+  "warnings": [],
+  "review_state": "pending_review",
+  "legal_next_states": ["approved", "rejected"]
+}
+```
+
+**`legal_next_states`** is the set of states
+reachable from `review_state` in one step. It
+mirrors `app.vision.review_state.legal_next_states()`
+and is informational; the storage layer's
+`transition()` is the authority on legality.
+
+**Errors:**
+
+- 404 — `ingestion_id` not found.
+
+## `POST /api/drawing/ingest/{ingestion_id}/approve`
+
+**Body:**
+
+```json
+{
+  "to_state": "pending_review | approved | rejected",
+  "actor": "<string>",
+  "reason": "<optional string>"
+}
+```
+
+**`to_state` validation:**
+
+The route accepts `pending_review`, `approved`,
+`rejected`. It rejects `draft` (no incoming
+edge) and `promoted` (reserved for `/commit`).
+HTTP 400 on invalid values.
+
+**State machine:**
+
+The route calls
+`app.vision.review_store.ReviewStore.transition()`,
+which is the atomic read-validate-write. The
+transition is legal iff `(from_state, to_state)`
+appears in
+`app.vision.review_state._LEGAL_TRANSITIONS`.
+Illegal transitions raise
+`IllegalReviewStateTransition` which the route
+translates to HTTP 409 with the legal next
+states listed.
+
+**Two-hop walk:**
+
+`DRAFT → PENDING_REVIEW → APPROVED` requires
+two calls. The state machine refuses any
+shortcut. The route does not special-case the
+two-hop; the storage layer's legal-transition
+table is the authority.
+
+**Response (200):**
+
+```json
+{
+  "status": "ok",
+  "ingestion_id": "ing_abc",
+  "from_state": "draft",
+  "to_state": "pending_review",
+  "actor": "alice"
+}
+```
+
+**Errors:**
+
+- 400 — invalid `to_state`.
+- 404 — `ingestion_id` not found.
+- 409 — illegal transition (lists legal next
+  states) or terminal-state attempt.
+
+## `PATCH /api/drawing/ingest/{ingestion_id}/graph`
+
+**Body:**
+
+```json
+{
+  "edited_by": "<string>",
+  "graph": { "...": "MachineGraph dict" },
+  "edited_fields": ["nodes", "edges"],
+  "note": "<optional string>"
+}
+```
+
+**Validation:**
+
+- The graph must be a dict; the route does
+  **not** validate the graph schema (it passes
+  through to the `IngestionStore`).
+- The review state must not be terminal
+  (`REJECTED`, `PROMOTED`). HTTP 409 otherwise.
+- The route computes a fresh `graph_hash` for
+  the new graph.
+
+**Side effects:**
+
+- Appends a `record_kind: "patch"` record to
+  the `IngestionStore` file.
+- The prior snapshot is preserved; the new
+  graph replaces the in-effect one.
+- The `note` is recorded verbatim in the
+  audit trail (or `None` if omitted).
+
+**Response (200):**
+
+```json
+{
+  "status": "ok",
+  "ingestion_id": "ing_abc",
+  "graph_hash": "sha256:...",
+  "patch_count": 1,
+  "edited_by": "alice"
+}
+```
+
+**Errors:**
+
+- 404 — `ingestion_id` not found.
+- 409 — terminal state (REJECTED or PROMOTED).
+
+## `POST /api/drawing/ingest/{ingestion_id}/commit`
+
+**Body:**
+
+```json
+{
+  "actor": "<string>",
+  "reason": "<optional string>"
+}
+```
+
+**Pre-checks (in order):**
+
+1. `IngestionStore.read_current(ingestion_id)` —
+   404 if the ingestion has no snapshot.
+2. `IngestionStore.has_commit(ingestion_id)` —
+   409 with `error: already_committed` if a
+   prior commit record exists.
+3. `ReviewStore.read_current_state(ingestion_id)` —
+   409 with `error: not_approved` and the legal
+   next states if the state is not `APPROVED`.
+
+**Intent construction:**
+
+The route builds a `RevisionIntent` via
+`app.vision.intent_adapter.build_intent()`:
+
+```python
+build_intent(IntentRequestContext(
+    request_kind=IntentRequestKind.EXPLICIT_COMMIT,
+    commit_requested=True,
+    review_state=ReviewState.APPROVED,
+    ingestion_id=ingestion_id,
+    actor=payload.actor,
+))
+```
+
+The `intent_adapter` is the only legitimate
+constructor of `RevisionIntent`. Direct
+construction is a layering violation.
+
+**Gate verdict:**
+
+The route calls
+`app.core.promotion_gate.explain_decision(intent,
+auto_promote=True)` as a defense-in-depth check.
+If the gate refuses, the route returns 409 with
+`error: gate_refused` and the gate's reason
+verbatim. In practice, the route's pre-check
+(3 above) and the gate's verdict agree; the
+gate call is the safety net.
+
+**Orchestrator call:**
+
+The route projects the in-effect graph into
+the orchestrator's config shape via
+`app.vision.orchestrator_adapter.graph_to_orchestrator_config()`,
+then calls
+`orchestrator.run_machine_job(auto_promote=True,
+revision_intent=intent, ingestion_path=...)`.
+
+**`ingestion_path` payload:**
+
+```python
+ingestion_path = {
+    "source_file": current["source_file"],
+    "ocr_confidence": current.get("ocr_confidence"),
+    "graph_hash": current["graph_hash"],
+    "ingestion_id": ingestion_id,
+}
+```
+
+The orchestrator passes this to
+`app.core.revisions.archive_revision()`, which
+writes it to `manifest.json` as a top-level
+`ingestion_path` field.
+
+**Side effects on success (non-rejected):**
+
+- The orchestrator runs the build pipeline.
+- The route writes a `record_kind: "commit"`
+  record to the `IngestionStore`.
+- The route calls
+  `ReviewStore.transition(ingestion_id,
+  to_state=ReviewState.PROMOTED, ...)`.
+
+**Response (200, success):**
+
+```json
+{
+  "status": "ok",
+  "ingestion_id": "ing_abc",
+  "revision_id": "rev_xyz",
+  "promotion_mode": "attempted",
+  "promoted": true,
+  "score": 0.85,
+  "directory": "outputs/revisions/hopper/rev_xyz",
+  "committed": true
+}
+```
+
+**Response (200, rejected_by_governance):**
+
+```json
+{
+  "status": "ok",
+  "ingestion_id": "ing_abc",
+  "revision_id": "rev_xyz",
+  "promotion_mode": "rejected_by_governance",
+  "promoted": false,
+  "score": 0.85,
+  "directory": "outputs/revisions/hopper/rev_xyz",
+  "committed": false,
+  "note": "Build completed but the promotion_gate refused to promote. The ingestion remains APPROVED; re-call /commit after the issue is resolved."
+}
+```
+
+**Errors:**
+
+- 404 — `ingestion_id` not found.
+- 409 — `error: already_committed` /
+  `error: not_approved` / `error: gate_refused`.
+
+## `IngestionResult` schema
+
+The dataclass in
+`app/vision/drawing_ingestor.py:IngestionResult`
+is the platform's contract for the result of
+ingesting one drawing file. The `ingest()`
+function returns it; the route layer projects
+it into the JSON response.
+
+```python
+@dataclass
+class IngestionResult:
+    graph: MachineGraph                  # canonical
+    yaml_config: Dict[str, Any]          # compiled from graph
+    title_block: Dict[str, str]          # extracted fields
+    bom_rows: List[Dict[str, Any]]       # extracted BOM
+    dimensions: List[Dict[str, Any]]     # extracted annotations
+    confidence: float                    # [0, 1]
+    warnings: List[str]                  # non-fatal
+    raw_text: str                        # OCR / pdfplumber output
+```
+
+**`graph` shape:**
+
+`app.graph.models.MachineGraph` is a frozen
+graph with `nodes: Dict[str, SubsystemNode]`
+and `edges: List[FlowEdge]`. Each `SubsystemNode`
+has:
+
+- `node_id` — stable slug
+- `node_type` — `NodeType` enum
+- `label` — human-readable
+- `config` — extracted parameter dict
+- `source` — `"drawing" | "yaml" | "inferred"`
+- `confidence` — node-level extraction
+  confidence
+- `metadata` — arbitrary dict
+
+**`title_block` shape:**
+
+The `app.vision.titleblock_parser` extracts
+optional fields:
+
+- `name` — machine name from title block
+- `drawing_number`
+- `revision`
+- `client`
+- `project`
+- `date`
+- `scale`
+- `material`
+
+Missing fields are **absent** from the dict
+(not present as empty strings) so callers can
+distinguish "not found" from "found but empty."
+
+**`bom_rows` shape:**
+
+Each row: `part, description, qty, material,
+mass_kg`. The `part` is one of
+`Spindle | Drum | Frame | Hopper |
+CompressionRoller | Conveyor | Unknown`.
+
+**`dimensions` shape:**
+
+Each annotation: `value, unit, dim_type, raw`.
+`dim_type` is one of `diameter | radius |
+thickness | length | linear | extent |
+tolerance`. `value` is a `float` (or `[float,
+float]` for `extent`).
+
+## Manifest extension
+
+The orchestrator's `archive_revision()` writes
+`outputs/revisions/<machine>/<rev_id>/manifest.json`.
+Phase 17.2a added an optional `ingestion_path`
+top-level field:
+
+```json
+{
+  "machine_name": "hopper",
+  "revision_id": "rev_xyz",
+  "config": { "...": "..." },
+  "parent_revision": "rev_prior",
+  "chain_id": "chain_hopper_default",
+  "attempt_in_chain": 3,
+  "promotion_status": "candidate",
+  "ingestion_path": {
+    "source_file": "hopper_a3.pdf",
+    "ocr_confidence": 0.87,
+    "graph_hash": "sha256:...",
+    "ingestion_id": "ing_abc"
+  }
+}
+```
+
+**Backward compatibility:** the field is
+**additive only**. When `ingestion_path=None`
+is passed (the default; the pre-17.2a shape),
+the manifest bytes are byte-identical to the
+pre-17.2a output. The `archive_revision()`
+function pins the byte-stability in
+`tests/test_revisions_ingestion_path.py`.
+
+## Cross-boundary contracts
+
+The Phase 17 routes are wired across five
+boundaries:
+
+1. **Route layer** (`app/api/routes.py`) —
+   HTTP shape, status codes, request
+   validation.
+2. **IngestionStore** (`app/vision/ingestion_store.py`)
+   — durable snapshot + patch + commit
+   records, NDJSON append-only.
+3. **ReviewStore** (`app/vision/review_store.py`)
+   — state machine enforcement, atomic
+   read-validate-write under per-key lock.
+4. **Promotion gate** (`app/core/promotion_gate.py`)
+   — the single enforcement boundary. Pure
+   function: `(intent, auto_promote) -> bool`.
+5. **Orchestrator** (`app/core/orchestrator.py`)
+   — additive `revision_intent: Optional[...] =
+   None` kwarg; `LEGACY` intent synthesized
+   when the kwarg is absent.
+
+**The semantic transition of Phase 17.3:**
+
+```
+pre-17.3:  completed == promotable   (implicit)
+post-17.3: completed != promotable   (explicit)
+```
+
+A successful build is **not** automatically
+promotable. Promotion requires `review_state
+== APPROVED` **and** `commit_requested=True`
+on the `RevisionIntent`. The gate is the
+authority; the route's pre-check and the
+state machine are defense in depth.
+
+**Layering:**
+
+```
+Route (HTTP) -> Store (durability) -> Gate (verdict) -> Orchestrator (build)
+       |                                |
+       +-- ReviewStore (state) --------+
+```
+
+The gate **does not** import from the
+orchestrator. The orchestrator **does** import
+from the gate. The dependency direction is
+one-way.
+
+## Test surface
+
+| Test file | What it pins |
+|-----------|--------------|
+| `tests/test_review_state.py` | The state machine's legal-transition table. |
+| `tests/test_revision_intent.py` | The `RevisionIntent` dataclass + the `intent_adapter`. |
+| `tests/test_promotion_gate.py` | The full truth table for `promotion_allowed`. |
+| `tests/test_ingestion_storage.py` | The `IngestionStore`'s append-only semantics + per-key locks. |
+| `tests/test_approve_route.py` | The `/approve` route's contract (HTTP shape, error codes, audit trail). |
+| `tests/test_commit_route.py` | The `/commit` route's contract (gate-blocked paths, terminal-state guard). |
+| `tests/test_patch_graph_route.py` | The PATCH `/graph` route's contract (terminal-state guard, hash recomputation). |
+| `tests/test_ingestion_id_issuance.py` | The `/drawing/ingest` route's `ingestion_id` + `graph_hash` contract. |
+| `tests/test_phase17_3_integration.py` | The cross-boundary integration acceptance test. |
+| `tests/test_hemp_decorticator_validation_pack.py` | The validation pack's regression suite (per spec §12.3). |
+
+## Migration notes for pre-17.3 callers
+
+**Legacy `/api/improve/register` callers:**
+
+Pre-17.3, a successful build that cleared the
+threshold silently promoted. Post-17.3, the
+route passes `auto_promote=False` to the
+orchestrator. The response now carries
+`promotion_mode: "disabled"` so the caller
+can see the build completed without promoting.
+
+To promote, the caller must now:
+
+1. Build a manual `RevisionIntent` with
+   `commit_requested=True`.
+2. Call the orchestrator with
+   `auto_promote=True, revision_intent=intent`.
+3. Or use the dedicated `/commit` flow
+   (preferred for human-in-the-loop).
+
+**The orchestrator's signature:**
+
+The `run_machine_job` method gained one
+additive kwarg:
+
+```python
+def run_machine_job(
+    machine_name: str,
+    config: Dict[str, Any],
+    auto_promote: bool = True,
+    parent_info: Optional[Dict[str, Any]] = None,
+    ingestion_path: Optional[Dict[str, Any]] = None,
+    revision_intent: Optional[RevisionIntent] = None,  # NEW
+) -> Dict[str, Any]:
+```
+
+When `revision_intent=None` (the pre-17.3
+default), the orchestrator synthesizes a
+`LEGACY` intent from `auto_promote` and
+proceeds. The behavior is byte-equivalent to
+pre-17.3 for callers that do not pass the
+kwarg. The kwarg discipline is inherited from
+17.2a: additive, optional, default `None`,
+no new mandatory params.
