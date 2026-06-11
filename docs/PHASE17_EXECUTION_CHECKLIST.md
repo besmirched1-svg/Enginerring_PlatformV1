@@ -956,28 +956,44 @@ when sidecars are TBD).
 
 ## 6. 17.5 — Operator Documentation
 
-Per spec §7.5. **Not started.** Placeholder for the
-sub-phase after 17.4.
+Per spec §7.5. **Complete.** Sub-phase
+items landed as separate commits:
+- `docs/DRAWING_INGESTION.md` (operator-facing)
+  — task #25
+- `docs/PHASE17_API.md` (developer-facing) —
+  task #29
 
 ### 17.5 Checklist
 
-- [ ] `docs/DRAWING_INGESTION.md` exists. Operator-
+- [x] `docs/DRAWING_INGESTION.md` exists. Operator-
       facing. Covers: how to upload, what to do if
       confidence is low, how to review before commit.
-      Must clearly state that auto-commit is opt-in
+      Clearly states that auto-commit is opt-in
       and that the review gate is mandatory.
-- [ ] `docs/PHASE17_API.md` exists. Developer-facing.
+- [x] `docs/PHASE17_API.md` exists. Developer-facing.
       Covers: new routes, IngestionResult schema,
-      manifest extension.
+      manifest extension, audit-log coverage of the
+      drawing-ingest lifecycle (Phase 17.6 #35
+      addition).
 
 ---
 
 ## 7. 17.6 — Production Hardening
 
-Per spec §7.6. **In progress.** Sub-phase
-items land as separate commits; the
-champion-pointer lock + audit log landed in
-this commit.
+Per spec §7.6. **Complete.** All five sub-phase
+items landed as separate commits:
+- Cross-platform champion-pointer lock + audit
+  log (task #26)
+- Rate limiting on drawing ingest routes
+  (task #30)
+- Input-injection audit on the vision pipeline
+  (task #34, with the
+  `docs/security/PHASE17_INPUT_INJECTION_AUDIT.md`
+  deliverable)
+- Audit log for every ingestion event (task #35)
+
+See `docs/releases/PHASE17_CLOSEOUT.md` for the
+full per-task delivery record.
 
 ### 17.6 Checklist
 
