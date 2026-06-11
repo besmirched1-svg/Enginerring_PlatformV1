@@ -994,7 +994,22 @@ this commit.
       `outputs/audit/audit_YYYYMMDD.jsonl`.
 - [ ] Audit the vision pipeline for input-injection
       attacks. Document the audit.
-- [ ] Rate limiting on the ingest route.
+- [x] **Rate limiting on the ingest routes** (commit
+      landed). In-memory token bucket, no Redis.
+      30/min per IP on `/drawing/ingest`,
+      5/min on `/drawing/ingest-and-build`
+      (orchestrator call is expensive),
+      10/min on `/drawing/ingest/{id}/commit`.
+      429 on exhaustion with `Retry-After` and
+      `X-RateLimit-*` headers. Every 429 is
+      recorded in the global audit log with
+      `action=rate_limit_exceeded`,
+      `success=false`. `RATE_LIMIT_ENABLED=0`
+      is the test backdoor (the
+      `tests/conftest.py` autouse fixture sets
+      it by default; the rate-limit test file
+      overrides to enable the limiter for its
+      own cases).
 - [ ] Audit log for every ingestion: who uploaded,
       when, what was extracted, what was committed.
       (The champion-promotion audit log from the

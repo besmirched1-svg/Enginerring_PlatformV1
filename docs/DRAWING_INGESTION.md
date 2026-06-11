@@ -493,3 +493,59 @@ operator should escalate to the maintainer:
 
 For platform errors and unexpected behavior,
 see `docs/TROUBLESHOOTING.md`.
+
+## What if I get a 429?
+
+The three drawing-ingest routes are rate-limited
+per source IP via an in-memory token bucket.
+The limits are:
+
+| Route | Per-IP limit |
+|-------|--------------|
+| `POST /api/drawing/ingest` | 30/min |
+| `POST /api/drawing/ingest-and-build` | 5/min |
+| `POST /api/drawing/ingest/{id}/commit` | 10/min |
+
+A 429 response carries the standard rate-limit
+headers:
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+X-RateLimit-Limit: 30
+X-RateLimit-Remaining: 0
+
+{
+  "detail": {
+    "error": "rate_limit_exceeded",
+    "bucket": "ingest",
+    "retry_after_seconds": 12
+  }
+}
+```
+
+**What to do:**
+
+1. **Wait the `Retry-After` seconds and retry.**
+   The header value is the integer number of
+   seconds until the next token is available.
+2. **For a script that needs to retry:** back
+   off exponentially. The 429 carries the
+   `Retry-After` hint; honor it.
+3. **Persistent 429s** indicate either a
+   misbehaving client or a legitimate burst
+   that exceeds the per-IP budget. If you
+   genuinely need a higher rate (e.g. a batch
+   job importing many drawings), run the
+   client from multiple source IPs.
+4. **Check the audit log** at
+   `outputs/audit/audit_YYYYMMDD.jsonl` for
+   the source IP of the 429s. If the IP is
+   unexpected, it may indicate a runaway
+   client.
+
+**Successful responses also carry the
+`X-RateLimit-Limit` and `X-RateLimit-Remaining`
+headers** so a well-behaved client can see its
+budget depleting and self-throttle before
+hitting the 429.

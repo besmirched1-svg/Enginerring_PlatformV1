@@ -20,7 +20,12 @@ the audit trail end-to-end. The pre-17.6 code had a
 `fcntl.flock` site that was silently a no-op on Windows
 and covered only the first of the four writes; the
 new `app.core.champion_lock` module fixes both gaps
-without adding a dependency.
+without adding a dependency. Task #30 (rate limiting
+on the three drawing-ingest routes) is the second
+17.6 deliverable; it is in-process and Redis-free,
+keyed on `request.client.host` (or `X-Forwarded-For`
+when `TRUST_FORWARDED_FOR=1`), with every 429
+recorded in the same global audit log.
 
 ### Added
 
@@ -107,6 +112,55 @@ without adding a dependency.
   has `actor="unknown"` and `reason=None`, which
   flow into the audit log the same way as
   17.6-sourced intents.
+
+### Rate limiting (task #30)
+
+- **`app/api/rate_limit.py`** — the in-memory
+  token-bucket rate limiter. Per-IP buckets for
+  the three drawing-ingest routes:
+  `BUCKET_INGEST=30/min`,
+  `BUCKET_INGEST_AND_BUILD=5/min`,
+  `BUCKET_COMMIT=10/min`. The limiter is
+  registered on a process-wide singleton
+  (`get_rate_limiter()` / `reset_rate_limiter()`
+  are the test seams). The IP source is
+  `request.client.host` by default; the
+  `X-Forwarded-For` header is honored only when
+  `TRUST_FORWARDED_FOR=1` is set in the
+  environment. No Redis dependency. The audit
+  log is the persistent record of 429s; the
+  in-memory bucket is ephemeral.
+- **429 response shape** — `Retry-After`,
+  `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`
+  headers, and a JSON body carrying the bucket
+  name and `retry_after_seconds`. Successful
+  responses also carry `X-RateLimit-Limit` and
+  `X-RateLimit-Remaining` so a well-behaved
+  client can see its budget depleting.
+- **`tests/test_rate_limit.py`** — 10 tests
+  pinning the per-route boundary (30, 5, 10),
+  per-IP isolation, the `Retry-After` /
+  `X-RateLimit-*` headers, the token-bucket
+  refill, the unrelated-route exclusion, and
+  the audit-log-on-429 write.
+- **`tests/conftest.py`** — a new autouse
+  fixture sets `RATE_LIMIT_ENABLED=0` by
+  default so existing tests that share a
+  module-scoped `TestClient` (and thus a
+  single `request.client.host`) don't bleed
+  into each other. The rate-limit test file
+  overrides the fixture to enable the limiter
+  for its own cases. The env var is a
+  test-only backdoor; production deployments
+  leave it unset (the limiter is on by
+  default).
+- **The 1-per-`ingestion_id` invariant** for
+  `/commit` is enforced at the storage layer
+  (`IngestionStore.has_commit` returns 409 on
+  re-commit; `ReviewState.PROMOTED` is
+  terminal). The rate limiter is a front-line
+  defense; the state machine is defense in
+  depth.
 
 ### Locking discipline
 

@@ -5,7 +5,7 @@ import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
@@ -224,6 +224,7 @@ from fastapi import UploadFile, File as FastAPIFile
 @router.post("/drawing/ingest")
 async def ingest_drawing(
     request: Request,
+    response: Response,
     file: UploadFile = FastAPIFile(...),
 ):
     """
@@ -252,7 +253,28 @@ async def ingest_drawing(
     the graph dict (sorted keys for determinism)
     so the operator can verify the graph content
     end-to-end.
+
+    Phase 17.6 (task #30) adds per-IP rate limiting:
+    30/minute per client IP via an in-memory token
+    bucket. A 429 is returned with ``Retry-After``,
+    ``X-RateLimit-Limit``, and ``X-RateLimit-Remaining``
+    headers when the bucket is exhausted. The 200
+    path also carries the two ``X-RateLimit-*``
+    headers so a well-behaved client can see its
+    budget depleting.
     """
+    # Phase 17.6 (task #30): rate limit at the front
+    # door. The check fires before any file validation
+    # so a 429 is returned even for malformed uploads.
+    from app.api.rate_limit import enforce_rate_limit, BUCKET_INGEST
+    enforce_rate_limit(request, "ingest", BUCKET_INGEST)
+    response.headers["X-RateLimit-Limit"] = str(
+        request.state.ratelimit_limit
+    )
+    response.headers["X-RateLimit-Remaining"] = str(
+        request.state.ratelimit_remaining
+    )
+
     from app.vision.constants import CONFIDENCE_FLOOR
     from app.vision.upload_validation import validate_and_stage_upload
     from app.vision.ingestion_store import IngestionStore
@@ -392,6 +414,7 @@ async def ingest_drawing(
 @router.post("/drawing/ingest-and-build")
 async def ingest_drawing_and_build(
     request: Request,
+    response: Response,
     file: UploadFile = FastAPIFile(...),
     commit: bool = False,
 ):
@@ -427,7 +450,34 @@ async def ingest_drawing_and_build(
     task #38). Both paths funnel through the
     same gate; the gate's verdict is
     authoritative for both.
+
+    Phase 17.6 (task #30) adds per-IP rate
+    limiting: 5/minute per client IP via an
+    in-memory token bucket. The orchestrator
+    call is expensive (SCAD -> STL -> PNG ->
+    BOM -> Evaluation), so the per-IP budget
+    is tight. The 429 response is shaped
+    identically to the /drawing/ingest 429.
     """
+    # Phase 17.6 (task #30): rate limit at the
+    # front door. The check fires before the
+    # file validation, so a 429 is returned even
+    # for malformed uploads. The 5/min cap
+    # matches the checklist's recommended limit
+    # for the auto-build path.
+    from app.api.rate_limit import (
+        enforce_rate_limit, BUCKET_INGEST_AND_BUILD,
+    )
+    enforce_rate_limit(
+        request, "ingest_and_build", BUCKET_INGEST_AND_BUILD,
+    )
+    response.headers["X-RateLimit-Limit"] = str(
+        request.state.ratelimit_limit
+    )
+    response.headers["X-RateLimit-Remaining"] = str(
+        request.state.ratelimit_remaining
+    )
+
     import hashlib
     from app.vision.constants import CONFIDENCE_FLOOR
     from app.vision.upload_validation import validate_and_stage_upload
@@ -2811,6 +2861,8 @@ class CommitRequest(BaseModel):
 
 @router.post("/drawing/ingest/{ingestion_id}/commit")
 def commit_ingestion(
+    request: Request,
+    response: Response,
     ingestion_id: str,
     payload: CommitRequest,
 ):
@@ -2824,7 +2876,33 @@ def commit_ingestion(
     ingestion_id is unknown. Returns 409 if the
     state is not APPROVED, or if the ingestion
     has already been committed.
+
+    Phase 17.6 (task #30) adds per-IP rate
+    limiting: 10/minute per client IP via an
+    in-memory token bucket. The 1-per-
+    ``ingestion_id`` invariant is enforced at
+    the storage layer (``IngestionStore.has_commit``
+    returns 409 on re-commit; the
+    ``ReviewState.PROMOTED`` is terminal). The
+    rate limiter is a front-line defense; the
+    state machine is defense in depth.
     """
+    # Phase 17.6 (task #30): rate limit at the
+    # front door. The check fires before any
+    # storage lookup so a 429 is returned even
+    # for malformed or missing ``ingestion_id``
+    # requests — the spam protection sits at
+    # the very front door, before the 404 and
+    # 409 paths.
+    from app.api.rate_limit import enforce_rate_limit, BUCKET_COMMIT
+    enforce_rate_limit(request, "commit", BUCKET_COMMIT)
+    response.headers["X-RateLimit-Limit"] = str(
+        request.state.ratelimit_limit
+    )
+    response.headers["X-RateLimit-Remaining"] = str(
+        request.state.ratelimit_remaining
+    )
+
     from app.vision.ingestion_store import IngestionStore
     from app.vision.review_state import ReviewState
     from app.vision.review_store import ReviewStore

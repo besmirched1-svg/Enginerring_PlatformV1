@@ -21,12 +21,12 @@ enforce.
 
 | Method | Path | Purpose | Added in |
 |--------|------|---------|----------|
-| POST   | `/api/drawing/ingest` | Issue `ingestion_id`, persist snapshot. **No** orchestrator call. | 17.3 (5/N) |
+| POST   | `/api/drawing/ingest` | Issue `ingestion_id`, persist snapshot. **No** orchestrator call. **Rate-limited** at 30/min per IP. | 17.3 (5/N) / 17.6 (#30) |
 | GET    | `/api/drawing/ingest/{ingestion_id}` | Read the stored IngestionResult + current review state. | 17.3 |
 | POST   | `/api/drawing/ingest/{ingestion_id}/approve` | Walk the review state. | 17.3 (3/N) |
 | PATCH  | `/api/drawing/ingest/{ingestion_id}/graph` | Operator-initiated graph edit. | 17.3 (6/N) |
-| POST   | `/api/drawing/ingest/{ingestion_id}/commit` | The only path that promotes. | 17.3 (4/N) |
-| POST   | `/api/drawing/ingest-and-build` | Opt-in auto-build shortcut. | 17.2a / 17.3 (8/N) |
+| POST   | `/api/drawing/ingest/{ingestion_id}/commit` | The only path that promotes. **Rate-limited** at 10/min per IP. | 17.3 (4/N) / 17.6 (#30) |
+| POST   | `/api/drawing/ingest-and-build` | Opt-in auto-build shortcut. **Rate-limited** at 5/min per IP. | 17.2a / 17.3 (8/N) / 17.6 (#30) |
 | POST   | `/api/improve/register` | Legacy YAML-submit route (now opt-in). | 17.3 (7/N) |
 
 ## `POST /api/drawing/ingest`
@@ -706,3 +706,104 @@ contract is "all writes go through
 `set_new_champion`," and the orchestrator
 acquires the lock for the entire four-write
 group.
+
+## Rate limiting (Phase 17.6)
+
+The three drawing-ingest routes are rate-limited
+per-IP via an in-memory token bucket. The
+limiter is a single-process registry keyed on
+``"<bucket_name>:ip:<client_ip>"``. There is no
+Redis dependency; the limiter dies with the
+process and the audit log at
+`outputs/audit/audit_YYYYMMDD.jsonl` is the
+persistent record of every 429.
+
+| Route | Per-IP limit |
+|-------|--------------|
+| `POST /api/drawing/ingest` | 30/min |
+| `POST /api/drawing/ingest-and-build` | 5/min |
+| `POST /api/drawing/ingest/{id}/commit` | 10/min |
+
+The bucket has two parameters: ``capacity``
+(the burst budget; a fresh bucket can serve
+that many requests in a tight loop before the
+first 429) and ``refill_per_sec`` (the sustained
+budget; the bucket regenerates to full in
+exactly 60 seconds, regardless of capacity).
+The production config is ``refill_per_sec =
+capacity / 60`` so a single client can sustain
+``capacity / 60`` requests per second
+indefinitely after the burst.
+
+**429 response shape:**
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+X-RateLimit-Limit: 30
+X-RateLimit-Remaining: 0
+Content-Type: application/json
+
+{
+  "detail": {
+    "error": "rate_limit_exceeded",
+    "bucket": "ingest",
+    "retry_after_seconds": 12
+  }
+}
+```
+
+The 200 path also carries
+``X-RateLimit-Limit`` and ``X-RateLimit-Remaining``
+so a well-behaved client can see its budget
+depleting. ``Retry-After`` is 429-only.
+
+**Client IP source:** ``request.client.host``
+(the immediate TCP peer) by default. The
+``X-Forwarded-For`` header is honored only when
+``TRUST_FORWARDED_FOR=1`` is set in the
+environment. Behind a trusted reverse proxy,
+set the env var; exposed directly, leave it
+unset so an attacker can't spoof the source IP
+to dodge the limit.
+
+**Every 429 is recorded** in the global audit
+log at `outputs/audit/audit_YYYYMMDD.jsonl`
+with the following entry:
+
+```json
+{
+  "timestamp": "2026-06-11T12:34:56+00:00",
+  "username": "anonymous",
+  "action": "rate_limit_exceeded",
+  "resource": "ingest",
+  "detail": "ip=1.2.3.4,retry_after=12",
+  "ip_address": "1.2.3.4",
+  "success": false
+}
+```
+
+The audit call is wrapped in a try/except so
+an audit-log failure cannot prevent the 429
+from being returned to the client — the rate
+limit is the load-bearing security control, the
+audit is the forensic record.
+
+**The 1-per-`ingestion_id` invariant** for
+`/commit` is enforced at the storage layer
+(`IngestionStore.has_commit` returns 409 on
+re-commit; `ReviewState.PROMOTED` is terminal).
+The rate limiter is a front-line defense; the
+state machine is defense in depth.
+
+**Test backdoor:** `RATE_LIMIT_ENABLED=0` in
+the environment disables the limiter. The
+platform's `tests/conftest.py` sets this
+backdoor by default for the test suite (so
+tests that share a module-scoped TestClient
+don't bleed into each other). The dedicated
+`tests/test_rate_limit.py` overrides the
+fixture to enable the limiter for its own
+cases. Production deployments should leave
+the env var unset (default is on).
+
